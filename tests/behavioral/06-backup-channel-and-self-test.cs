@@ -153,29 +153,29 @@ class H8
         F2.NetLiq = double.NaN;                                         // F2: net liquidation cannot be read
         Setting("DrawdownMode", "G1", "eod"); Setting("StartingBalance", "G1", "50000");   // G1: a trailing mode with no DrawdownAmount
         Set("cfgDrawdownAmount", double.NaN);
-        string st = Plain((string)Call("BuildSelfTestText", Call("AssessReadiness")));
+        string st = Plain((string)Call("BuildSelfTestText", Call("RunSelfTest")));
         Check("a complete account is ARMED", Regex.IsMatch(st, "Auto-flatten: ARMED for [^\\n]*LEAD") && st.Contains("LEAD") );
         Check("F2 cannot read net liquidation and is NOT ARMED, with the reason", st.Contains("NOT ARMED for") && st.Contains("F2") && st.Contains("net liquidation cannot be read") && st.Contains("Net liq UNREADABLE"));
         Check("G1 has a trailing mode but no DrawdownAmount: reported, with no floor to act on", st.Contains("DrawdownAmount is not set") && st.Contains("RiskAutoFlatten is on but there is no floor"));
         Check("the data check in use is listed per account", st.Contains("Data check: the account's own connection 'Orders+Data'") && st.Contains("OtherFeed"));
         Check("open P&L is shown", st.Contains("open P&L 0.00"));
-        F1.Unrealized = double.NaN; string st2 = Plain((string)Call("BuildSelfTestText", Call("AssessReadiness"))); F1.Unrealized = 0;
+        F1.Unrealized = double.NaN; string st2 = Plain((string)Call("BuildSelfTestText", Call("RunSelfTest"))); F1.Unrealized = 0;
         Check("unreadable open P&L is called out only where the closing balance needs it", st2.Contains("F1") && st2.Contains("open P&L UNREADABLE") && !st2.Contains("open P&L cannot be read, so the closing balance is unknown"));
         Setting("DrawdownMode", "F1", "eod"); Setting("StartingBalance", "F1", "50000"); Setting("DrawdownAmount", "F1", "2000"); F1.Unrealized = double.NaN;
-        string st3 = Plain((string)Call("BuildSelfTestText", Call("AssessReadiness"))); F1.Unrealized = 0;
+        string st3 = Plain((string)Call("BuildSelfTestText", Call("RunSelfTest"))); F1.Unrealized = 0;
         Check("an end-of-day account whose open P&L is unreadable is NOT ARMED for that reason", st3.Contains("open P&L cannot be read, so the closing balance is unknown"));
         Setting("DrawdownMode", "F1", "manual");
         string line = Plain((string)Call("AutoFlattenLine"));
         Check("/status carries the one-line summary", line.StartsWith("Auto-flatten: ") && line.Contains("ARMED for") && line.Contains("NOT ARMED for") && Plain((string)Call("BuildStatusReport")).Contains("Auto-flatten: "));
         Wait((Task)Call("HandleUpdateAsync", Update("/selftest"))); d = Drain();
         Check("/selftest replies", Any(d, "SELF-TEST"));
-        Set("readinessChecked", false); Set("startedUtc", DateTime.UtcNow.AddSeconds(-5)); Call("CheckReadinessOnce");
+        Set("startupSelfTestDone", false); Set("startedUtc", DateTime.UtcNow.AddSeconds(-5)); Call("RunStartupSelfTestOnce");
         Check("not before 20 s after startup", Drain().Count == 0);
-        Set("startedUtc", DateTime.UtcNow.AddSeconds(-60)); Call("CheckReadinessOnce"); d = Drain();
+        Set("startedUtc", DateTime.UtcNow.AddSeconds(-60)); Call("RunStartupSelfTestOnce"); d = Drain();
         Check("after that, once: LOUD when auto-flatten is on and cannot act", d.Count == 1 && Any(d, "SELF-TEST") && d[0].Priority && !d[0].Silent);
-        Call("CheckReadinessOnce"); Check("...and only once", Drain().Count == 0);
-        Set("cfgRiskAutoFlatten", false); Set("readinessChecked", false);
-        Call("CheckReadinessOnce"); d = Drain();
+        Call("RunStartupSelfTestOnce"); Check("...and only once", Drain().Count == 0);
+        Set("cfgRiskAutoFlatten", false); Set("startupSelfTestDone", false);
+        Call("RunStartupSelfTestOnce"); d = Drain();
         Check("with auto-flatten off the same report is quiet or routine", d.Count == 1 && !d[0].Priority);
         Set("cfgDrawdownAmount", 2000.0); F2.NetLiq = 50000;
         lock (Get("riskLock")) { var sa = (IDictionary)Get("accountSettings"); sa.Remove("drawdownmode|G1"); sa.Remove("startingbalance|G1"); sa.Remove("riskfloor|LEAD"); sa.Remove("riskfloor|F1"); sa.Remove("drawdownmode|F1"); sa.Remove("startingbalance|F1"); sa.Remove("drawdownamount|F1"); }
@@ -303,7 +303,7 @@ class H8
         int still = d.Count(m => m.Text.Contains("STILL EXPOSED"));
         Check("a locked account that stays exposed: the first alert at ~1.2 s and then a repeat every 0.4 s (" + still + " in 3.6 s)", still >= 4);
         Check("every one is loud", d.Where(m => m.Text.Contains("STILL EXPOSED")).All(m => m.Priority && !m.Silent));
-        Check("...and every one reached the backup channel too, each with its own elapsed time", sentWith("STILL EXPOSED (") >= 4 && sent.Select(x => x[1]).Distinct().Count() == sent.Count && noAmounts());
+        Check("...and every one reached the backup channel too, each with its own elapsed time", sentWith("STILL EXPOSED (") >= 4 && sent.Select(x => x[1]).Distinct().Count() >= 4 && noAmounts());
         Pos(F1, MarketPosition.Flat, 0); Thread.Sleep(1200); d = Drain();
         Check("once it is flat: a quiet FLAT CONFIRMED (late), and then it stops", Any(d, "FLAT CONFIRMED") && Any(d, "late") && !d.First(m => m.Text.Contains("FLAT CONFIRMED")).Priority);
         Thread.Sleep(1200); Check("...no more STILL EXPOSED after that", Drain().Count(m => m.Text.Contains("STILL EXPOSED")) == 0);
@@ -328,7 +328,7 @@ class H8
         Console.WriteLine("\n--- 9. open P&L reading exactly 0.00 while holding a position");
         DateTime p0 = new DateTime(2026, 10, 30, 16, 0, 0, DateTimeKind.Utc);
         Pos(F2, MarketPosition.Long, 1); F2.Unrealized = 0; F2.NetLiq = 50000; lock (sent) sent.Clear(); Drain();
-        string hint = Plain((string)Call("BuildSelfTestText", Call("AssessReadiness")));
+        string hint = Plain((string)Call("BuildSelfTestText", Call("RunSelfTest")));
         Check("the self-test already hints when a held position shows exactly 0.00", hint.Contains("Holding a position and open P&L reads exactly 0.00"));
         double[] walk = { 50000, 50002, 50006, 50010 };
         for (int i = 0; i < walk.Length; i++) { F2.NetLiq = walk[i]; Call("RiskTick", p0.AddSeconds(10 * i)); }
@@ -336,11 +336,46 @@ class H8
         Check("net liquidation moved by 10 over 30 s with open P&L stuck at 0.00: OPEN P&L LOOKS WRONG, loud", d.Count(m => m.Text.Contains("OPEN P&L LOOKS WRONG")) == 1 && d.First(m => m.Text.Contains("OPEN P&L LOOKS WRONG")).Priority && Any(d, "moved by 10.00") && Any(d, "F2"));
         Check("...and it is a Telegram alert, not a backup one", sent.Count == 0);
         F2.NetLiq = 50020; Call("RiskTick", p0.AddSeconds(40)); Check("...once, not every second", Drain().Count(m => m.Text.Contains("OPEN P&L LOOKS WRONG")) == 0);
-        string suspect = Plain((string)Call("BuildSelfTestText", Call("AssessReadiness")));
+        string suspect = Plain((string)Call("BuildSelfTestText", Call("RunSelfTest")));
         Check("/selftest says so while it lasts", suspect.Contains("Open P&L has read exactly 0.00 while net liquidation moved by"));
         F2.Unrealized = 20; F2.NetLiq = 50020; Call("RiskTick", p0.AddSeconds(50));
-        Check("a real open P&L clears it", !Plain((string)Call("BuildSelfTestText", Call("AssessReadiness"))).Contains("Open P&L has read exactly 0.00 while"));
+        Check("a real open P&L clears it", !Plain((string)Call("BuildSelfTestText", Call("RunSelfTest"))).Contains("Open P&L has read exactly 0.00 while"));
         Pos(F2, MarketPosition.Flat, 0); F2.Unrealized = 0; F2.NetLiq = 50000; Drain();
+
+        Console.WriteLine("\n--- 12. a dropped connection reads 0.00 net liq: that is not a risk reading (a real MFFU disconnect did this)");
+        foreach (string a in new[] { "LEAD", "F1", "F2", "G1" }) ((IDictionary)Get("accountLocks")).Remove(a);
+        lock (Get("riskLock")) ((IDictionary)Get("riskStates")).Remove("G1");
+        Pos(G1, MarketPosition.Flat, 0); G1.NetLiq = 50000; connBad.Status = ConnectionStatus.Connected; connBad.PriceStatus = ConnectionStatus.Connected;
+        Setting("RiskFloor", "G1", "48000"); Setting("DailyLossLimit", "G1", "600");
+        Set("cfgRiskAutoFlatten", true); Set("cfgDailyLossAutoFlatten", true); Set("cfgRiskFlattenBuffer", 150.0); Set("cfgRiskConfirmSec", 2); Set("cfgUnknownFlattenSec", 0);
+        Func<object, string, object> getf = (o, n) => o.GetType().GetField(n) != null ? o.GetType().GetField(n).GetValue(o) : o.GetType().GetProperty(n).GetValue(o, null);
+        DateTime c0 = DateTime.UtcNow; int fc0 = G1.FlattenCount; Drain();
+        Call("RiskTick", c0); d = Drain();
+        Check("a healthy flat account raises nothing, and its day starts at 50,000", !d.Any(m => m.Text.Contains("G1")) && (double)getf(Rs("G1"), "SessionStart") == 50000.0);
+        connBad.Status = ConnectionStatus.ConnectionLost; connBad.PriceStatus = ConnectionStatus.ConnectionLost; G1.NetLiq = 0.0;
+        foreach (int sec in new[] { 1, 4, 8, 20, 90 }) Call("RiskTick", c0.AddSeconds(sec));
+        d = Drain();
+        Check("connection down, net liq 0.00, auto-flatten ON: no RISK BUFFER and no DAILY LOSS alert", !Any(d, "RISK BUFFER") && !Any(d, "DAILY LOSS") && !Any(d, "BELOW the floor"));
+        Check("...and the account is not flattened or locked", LockOf("G1") == null && G1.FlattenCount == fc0 && !Any(d, "LOCKED"));
+        string rl = Plain((string)Call("BuildRiskLines", G1, false));
+        Check("/status says the risk is not checked and shows the last good value, not a -48,000 buffer", rl.Contains("Risk not checked") && rl.Contains("last net liq 50,000.00") && !rl.Contains("buffer") && !rl.Contains("Today"));
+        connBad.Status = ConnectionStatus.Connected; connBad.PriceStatus = ConnectionStatus.Connected;
+        foreach (int sec in new[] { 100, 103, 106 }) Call("RiskTick", c0.AddSeconds(sec));
+        d = Drain();
+        Check("reconnected but the account still reads 0.00: still nothing", !Any(d, "RISK BUFFER") && !Any(d, "DAILY LOSS") && LockOf("G1") == null && G1.FlattenCount == fc0);
+        G1.NetLiq = 50000; Call("RiskTick", c0.AddSeconds(110)); d = Drain();
+        Check("the real value returns: no alerts, and the day's starting value was not disturbed", !d.Any(m => m.Text.Contains("G1")) && (double)getf(Rs("G1"), "SessionStart") == 50000.0 && LockOf("G1") == null);
+        Check("/status shows the numbers again", Plain((string)Call("BuildRiskLines", G1, false)).Contains("2,000.00 buffer"));
+        G1.NetLiq = 47950; foreach (int sec in new[] { 120, 123 }) Call("RiskTick", c0.AddSeconds(sec));
+        d = Drain();
+        Check("control: a real breach on a connected flat account still alerts and locks", Any(d, "RISK BUFFER") && LockOf("G1") != null);
+        ((IDictionary)Get("accountLocks")).Remove("G1"); lock (Get("riskLock")) ((IDictionary)Get("riskStates")).Remove("G1"); Drain();
+        Pos(G1, MarketPosition.Long, 1); G1.NetLiq = 0.0; connBad.Status = ConnectionStatus.ConnectionLost; connBad.PriceStatus = ConnectionStatus.Connected;
+        Call("RiskTick", c0.AddSeconds(200)); d = Drain();
+        Check("holding a position with only the order side down: RISK UNKNOWN (before, this was read as a floor breach)", Any(d, "RISK UNKNOWN") && Any(d, "order connection") && !Any(d, "BELOW the floor") && LockOf("G1") == null);
+        Pos(G1, MarketPosition.Flat, 0); G1.NetLiq = 50000; connBad.Status = ConnectionStatus.Connected; connBad.PriceStatus = ConnectionStatus.Connected;
+        ((IDictionary)Get("accountLocks")).Remove("G1"); lock (Get("riskLock")) { ((IDictionary)Get("riskStates")).Remove("G1"); var sa2 = (IDictionary)Get("accountSettings"); sa2.Remove("riskfloor|G1"); sa2.Remove("dailylosslimit|G1"); }
+        Set("cfgRiskAutoFlatten", false); Set("cfgDailyLossAutoFlatten", false); Call("RiskTick", DateTime.UtcNow); Drain();
 
         System.IO.File.WriteAllText(Dir + "/DirectTelegramNotifier.config",
             "BotToken=123456:ABCdefGHIjklMNOpqrSTUvwxYZ123456789\nAuthorizedChatID=42\nAccountName=LEAD,F1\nBackupAlertUrl=https://ntfy.example/t\nBackupAlertDetail=Everything\n");

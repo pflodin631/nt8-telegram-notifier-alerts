@@ -422,13 +422,18 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     if (!dataUp)
                         why = "this account's data connection is down";
+                    else if (AccountConnectionDown(a))
+                        why = "this account's order connection is down";
                     else if (double.IsNaN(netLiq))
                         why = "net liquidation cannot be read";
                     else if (staleInstrument != null)
                         why = "market data for " + staleInstrument + " is stale";
                 }
 
-                string lockReason = EvaluateAccountRisk(a.Name, netLiq, balance, why, session, now, loud, quiet, critical);
+                // A flat account that reports no value is not checked: there is nothing to read, and nothing open to protect.
+                bool notChecked = !exposed && RiskMonitored(a.Name) && FlatReadingUnusable(a, netLiq);
+                NoteRiskNotChecked(a.Name, notChecked);
+                string lockReason = notChecked ? null : EvaluateAccountRisk(a.Name, netLiq, balance, why, session, now, loud, quiet, critical);
                 if (lockReason != null)
                 {
                     string locked = LockAndFlatten(a, lockReason);
@@ -514,6 +519,60 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (changed)
                 WriteOutput("Risk data check for " + a.Name + ": using " + path + ".");
             return up;
+        }
+
+        // The connection NinjaTrader says this account uses, or null when it does not say.
+        private static CbiConnection FindAccountConnection(CbiAccount a)
+        {
+            try
+            {
+                if (!accountConnectionLooked)
+                {
+                    accountConnectionProperty = typeof(CbiAccount).GetProperty("Connection");
+                    accountConnectionLooked = true;
+                }
+                object value = null;
+                if (accountConnectionProperty != null)
+                    value = accountConnectionProperty.GetValue(a, null);
+                else
+                {
+                    System.Reflection.FieldInfo field = typeof(CbiAccount).GetField("Connection");
+                    if (field != null)
+                        value = field.GetValue(a);
+                }
+                return value as CbiConnection;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        // Is the order side of this account's own connection down? False when NinjaTrader does not say which connection it uses.
+        private static bool AccountConnectionDown(CbiAccount a)
+        {
+            CbiConnection c = FindAccountConnection(a);
+            return c != null && c.Status != ConnectionStatus.Connected;
+        }
+
+        // NinjaTrader reports a net liquidation of exactly 0.00 for an account whose connection is gone, and for a moment after it
+        // comes back. For a flat account that is not a reading: treated as one, it breaks every floor and every daily limit.
+        private static bool FlatReadingUnusable(CbiAccount a, double netLiq)
+        {
+            return AccountConnectionDown(a) || netLiq == 0.0;
+        }
+
+        private readonly HashSet<string> riskNotChecked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        private void NoteRiskNotChecked(string account, bool notChecked)
+        {
+            bool changed;
+            lock (riskLock)
+                changed = notChecked ? riskNotChecked.Add(account) : riskNotChecked.Remove(account);
+            if (changed)
+                WriteOutput(notChecked
+                    ? "Risk check paused for " + account + ": NinjaTrader reports no value for it (connection down, or 0.00 right after a reconnect). It resumes by itself."
+                    : "Risk check resumed for " + account + ".");
         }
 
         // Runs the core state machine for one account under riskLock and turns its events into messages.
@@ -1091,7 +1150,6 @@ namespace NinjaTrader.NinjaScript.AddOns
         private string HandleLeaderCommand(string argument)
         {
             string arg = (argument ?? string.Empty).Trim();
-            string configured = (cfgLeaderAccount ?? string.Empty).Trim();
             if (arg.Length == 0)
             {
                 string over;
@@ -1176,6 +1234,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     snap.BestDay = rs.BestDay;
                     snap.BaselineMidSession = rs.BaselineMidSession;
                     snap.Unknown = rs.Unknown;
+                    snap.LastNetLiq = rs.LastNetLiq;
                 }
                 accountLocks.TryGetValue(name, out lk);
             }
@@ -1194,6 +1253,17 @@ namespace NinjaTrader.NinjaScript.AddOns
                     sb.Append("  ").Append(EmWarn).Append(" Set DrawdownAmount").Append(mode == Dtn.ModeStatic ? " and StartingBalance" : string.Empty).Append(" for this mode\n");
             }
 
+            bool notChecked = RiskMonitored(name) && NetPositions(a).Count == 0 && FlatReadingUnusable(a, netLiq);
+            if (notChecked)
+            {
+                sb.Append("  ").Append(EmWarn).Append(" <b>Risk not checked</b>: NinjaTrader is not reporting this account's value (connection down, or just reconnected)");
+                if (snap.LastNetLiq > 0)
+                    sb.Append(Sep).Append("last net liq ").Append(N2(snap.LastNetLiq));
+                sb.Append("\n");
+            }
+
+            if (!notChecked)
+            {
             if (mode != Dtn.ModeOff && (!double.IsNaN(floor) || detailed))
             {
                 sb.Append("  Net liq ").Append(double.IsNaN(netLiq) ? "unavailable" : N2(netLiq));
@@ -1261,6 +1331,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                         sb.Append("  ").Append(EmWarn).Append(" Over the limit: <b>").Append(N2(cure)).Append("</b> more total profit, earned on smaller days, brings the best day back to ")
                           .Append(pctText).Append("%\n");
                 }
+            }
+
             }
 
             double inactiveLimit = InactivityLimitFor(name);
@@ -1375,6 +1447,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                             leaderOverride = value;
                             continue;
                         }
+                        if (key == "software")
+                        {
+                            knownSoftware = value;
+                            continue;
+                        }
                         int bar = key.IndexOf('|');
                         if (bar <= 0)
                             continue;
@@ -1451,6 +1528,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                     lastRiskSaveUtc = DateTime.UtcNow;
                     if (leaderOverride.Length > 0)
                         sb.Append("leader=").Append(leaderOverride).Append("\r\n");
+                    if (knownSoftware.Length > 0)
+                        sb.Append("software=").Append(knownSoftware).Append("\r\n");
                     foreach (KeyValuePair<string, DtnRiskState> kv in riskStates)
                     {
                         DtnRiskState rs = kv.Value;

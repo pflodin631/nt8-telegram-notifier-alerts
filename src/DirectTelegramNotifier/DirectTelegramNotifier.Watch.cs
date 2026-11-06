@@ -60,6 +60,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        private DateTime FlapNow()
+        {
+            return DateTime.UtcNow + connClockSkew;
+        }
+
         private void EvaluateChannel(string connection, string channel, ConnectionStatus previous, ConnectionStatus current, string detail)
         {
             if (previous == current)
@@ -74,8 +79,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     if (connDownSinceUtc.ContainsKey(key))
                         return;
-                    connDownSinceUtc[key] = DateTime.UtcNow;
-                    if (SuppressAsFlapping(key, connection, channel))
+                    connDownSinceUtc[key] = FlapNow();
+                    if (CountDropAndCheckFlapping(key, connection))
                         return;
 
                     AddConnectionNotice(connection, channel, true, previous == ConnectionStatus.Disconnecting,
@@ -88,11 +93,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                         return;
                     connDownSinceUtc.Remove(key);
 
-                    DateTime mutedUntil;
-                    if (connMutedUntilUtc.TryGetValue(key, out mutedUntil) && mutedUntil > DateTime.UtcNow)
+                    // While a connection is flapping its reconnects are not announced one by one. CheckFlappingConnections
+                    // reports an outage that lasts, and says when it has settled.
+                    if (connFlapping.ContainsKey(connection))
                         return;
 
-                    AddConnectionNotice(connection, channel, false, false, false, null, DateTime.UtcNow - since);
+                    AddConnectionNotice(connection, channel, false, false, false, null, FlapNow() - since);
                 }
             }
         }
@@ -162,7 +168,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 sb.Append(EmOk).Append(" <b>RECONNECTED</b>\n");
                 sb.Append(Html(n.Connection)).Append(Sep).Append(Html(channels)).Append("\n");
-                sb.Append("Down for ").Append(FormatDuration(n.Downtime));
+                sb.Append("Down for ").Append(n.Downtime.TotalSeconds < 1 ? "under 1s" : FormatDuration(n.Downtime));
             }
             return sb.ToString();
         }
@@ -211,11 +217,13 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         #region Restart detection, heartbeat and order monitoring
 
-        // ---- Connection flap suppression (called with connLock held) ----
+        // ---- Connection flapping (the first two are called with connLock held) ----
 
-        private bool SuppressAsFlapping(string key, string connection, string channel)
+        // True when this drop must not be announced on its own: the connection is flapping. The fourth drop of a channel within
+        // five minutes starts it, with one alert. After that drops are only counted, however long it goes on.
+        private bool CountDropAndCheckFlapping(string key, string connection)
         {
-            DateTime now = DateTime.UtcNow;
+            DateTime now = FlapNow();
             List<DateTime> hist;
             if (!connDownHistory.TryGetValue(key, out hist))
             {
@@ -225,17 +233,83 @@ namespace NinjaTrader.NinjaScript.AddOns
             hist.RemoveAll(t => (now - t).TotalSeconds > FlapWindowSec);
             hist.Add(now);
 
-            DateTime mutedUntil;
-            if (connMutedUntilUtc.TryGetValue(key, out mutedUntil) && mutedUntil > now)
+            FlapState fs;
+            if (connFlapping.TryGetValue(connection, out fs))
+            {
+                fs.Drops++;
+                fs.LastDrop = now;
                 return true;
-
+            }
             if (hist.Count >= FlapThreshold)
             {
-                connMutedUntilUtc[key] = now.AddSeconds(FlapMuteSec);
-                EnqueueText(MsgFlapping(connection, channel, hist.Count));
+                connFlapping[connection] = new FlapState { Since = now, LastDrop = now, LastReminder = now, Drops = hist.Count };
+                EnqueueText(MsgFlapping(connection, DropCounts(connection, now)));
                 return true;
             }
             return false;
+        }
+
+        // "orders 10 · data 8": the drops of each channel of this connection inside the flap window.
+        private string DropCounts(string connection, DateTime now)
+        {
+            List<string> parts = new List<string>();
+            foreach (string channel in new[] { "orders", "data" })
+            {
+                List<DateTime> h;
+                int n = 0;
+                if (connDownHistory.TryGetValue(connection + "|" + channel, out h))
+                    n = h.Count(t => (now - t).TotalSeconds <= FlapWindowSec);
+                if (n > 0)
+                    parts.Add(channel + " " + Num(n));
+            }
+            return string.Join(Sep, parts.ToArray());
+        }
+
+        // Runs on the watchdog tick. Says what a flapping connection would otherwise hide: an outage that lasts,
+        // that it is still flapping, and when it has settled.
+        private void CheckFlappingConnections(DateTime now)
+        {
+            lock (connLock)
+            {
+                foreach (string connection in connFlapping.Keys.ToList())
+                {
+                    FlapState fs = connFlapping[connection];
+                    string prefix = connection + "|";
+                    List<KeyValuePair<string, DateTime>> down = connDownSinceUtc
+                        .Where(kv => kv.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                    if (down.Count > 0)
+                    {
+                        DateTime oldest = down.Min(kv => kv.Value);
+                        if (!fs.DownAnnounced && (now - oldest).TotalSeconds >= FlapDownAlertSec)
+                        {
+                            fs.DownAnnounced = true;
+                            string channels = string.Join(" + ", down.Select(kv => kv.Key.Substring(prefix.Length)).OrderBy(c => c).ToArray());
+                            EnqueueText(MsgFlapDown(connection, channels, now - oldest));
+                        }
+                        continue;
+                    }
+
+                    if (fs.DownAnnounced)
+                    {
+                        fs.DownAnnounced = false;
+                        EnqueueQuiet(MsgFlapUp(connection));
+                    }
+
+                    if ((now - fs.LastDrop).TotalSeconds >= FlapSettleSec)
+                    {
+                        connFlapping.Remove(connection);
+                        connDownHistory.Remove(connection + "|orders");
+                        connDownHistory.Remove(connection + "|data");
+                        EnqueueQuiet(MsgFlapStable(connection, fs.Drops, fs.LastDrop - fs.Since));
+                    }
+                    else if ((now - fs.LastReminder).TotalSeconds >= FlapReminderSec)
+                    {
+                        fs.LastReminder = now;
+                        EnqueueText(MsgFlapReminder(connection, fs.Drops, now - fs.Since));
+                    }
+                }
+            }
         }
 
         // ---- Direct, synchronous send used for the shutdown message ----
@@ -384,7 +458,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             if ((now - lastHeartbeatPingUtc).TotalSeconds < cfgHeartbeatIntervalSec)
                 return;
 
-            // The ping vouches for alert delivery, not just for this timer: while Telegram is unreachable, the token
+            // The ping means "alerts are being delivered", not just "this timer runs": while Telegram is unreachable, the token
             // is revoked or alerts are stuck in the queue, it is held back so the external monitor raises the alarm.
             string problem = DeliveryProblem(now);
             if (problem != null)
@@ -609,6 +683,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             catch (Exception) { return "?"; }
         }
 
+        private static CbiInstrument SafeStrategyInstrument(StrategyBase st)
+        {
+            try { return st.Instrument; }
+            catch (Exception) { return null; }
+        }
+
         private static bool IsTerminatedState(string state)
         {
             return string.Equals(state, "Terminated", StringComparison.OrdinalIgnoreCase);
@@ -649,7 +729,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         StrategyInfo info;
                         if (!strategies.TryGetValue(key, out info))
                         {
-                            strategies[key] = new StrategyInfo { Ref = key, Name = name, AccountName = kv.Key, State = state };
+                            strategies[key] = new StrategyInfo { Ref = key, Name = name, AccountName = kv.Key, State = state, Instrument = SafeStrategyInstrument(kv.Value) };
                             if (!firstScan && !IsTerminatedState(state))
                             {
                                 quietMessages.Add(MsgStrategyEnabled(name, kv.Key, state));
@@ -1005,14 +1085,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (!string.IsNullOrEmpty(chosen))
                 return chosen;
 
-            string leader = (cfgLeaderAccount ?? string.Empty).Trim();
-            if (leader.Length > 0)
-                return leader;
-
-            string filter = (cfgAccountName ?? string.Empty).Trim();
-            if (filter.Length == 0 || filter == "*")
-                return string.Empty;
-            return filter.Split(',')[0].Trim();
+            // No LeaderAccount means no trade copier: no account is treated as a leader, and each one is tracked on its own.
+            return (cfgLeaderAccount ?? string.Empty).Trim();
         }
 
         private string AccountListText()
@@ -1074,7 +1148,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (!leaderProblemReported)
                     {
                         leaderProblemReported = true;
-                        WriteOutput("Copy check is off: set LeaderAccount in the config (AccountName is *).");
+                        WriteOutput("Copy check is off: LeaderAccount is not set, so each account is tracked on its own.");
                     }
                     return;
                 }
@@ -1181,12 +1255,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                 return string.Empty;
 
             string leaderName = ResolveLeaderName();
-            if (leaderName.Length == 0)
-                return string.Empty;
-
             List<CbiAccount> accounts = SnapshotTrackedAccounts();
             if (accounts.Count < 2)
                 return string.Empty;
+            if (leaderName.Length == 0)
+                return "Copy check: off (no LeaderAccount set; each account is tracked on its own)\n";
             if (!accounts.Any(acc => acc.Name.Equals(leaderName, StringComparison.OrdinalIgnoreCase)))
                 return "Copy check: leader " + Html(leaderName) + " is not connected\n";
 

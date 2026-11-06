@@ -44,10 +44,12 @@ internal static class CoreTests
         Sessions();
         QuietWindows();
         ConfigKeys();
+        ConfigValues();
+        RollLevels();
         FillsAndCommands();
         BasisConsistencyInactivity();
         RiskMachine();
-        SurvivorsAndReadiness();
+        SelfTestAndBoundaries();
         Boundaries();
         BoundariesTwo();
         BackupAndOpenPnl();
@@ -204,6 +206,34 @@ internal static class CoreTests
             Check(seen.Add(k), "known key listed once: " + k);
         foreach (string k in C.PerAccountKeys)
             Check(C.IsKnownKey(k), "per-account key is also a known key: " + k);
+    }
+
+    private static void ConfigValues()
+    {
+        Eq("0.95", C.StripInlineComment("0.95 # MFFU charges this per contract"), "a comment after a space is removed");
+        Eq("true", C.StripInlineComment("true\t# on"), "a comment after a tab is removed");
+        Eq("", C.StripInlineComment("# not set yet"), "a value that is only a comment is blank");
+        Eq("https://example.com/ping#frag", C.StripInlineComment("https://example.com/ping#frag"), "a # with no space before it is part of the value");
+        Eq("a#b", C.StripInlineComment("  a#b  "), "trimmed, inner # kept");
+        Eq("", C.StripInlineComment(null), "null is blank");
+        Check(C.IsValidAmountOrPercent(""), "blank daily loss limit is valid (off)");
+        Check(C.IsValidAmountOrPercent("1000") && C.IsValidAmountOrPercent("$1,000") && C.IsValidAmountOrPercent("2%"), "amounts and percentages");
+        Check(!C.IsValidAmountOrPercent("six hundred") && !C.IsValidAmountOrPercent("0%") && !C.IsValidAmountOrPercent("%"), "text, 0% and a bare % are not");
+    }
+
+    private static void RollLevels()
+    {
+        Check(C.RollLevel(40, 10) == 0 && C.RollLevel(11, 10) == 0, "outside the window: nothing");
+        Check(C.RollLevel(10, 10) == 1 && C.RollLevel(4, 10) == 1, "inside the window: roll soon");
+        Check(C.RollLevel(3, 10) == 2 && C.RollLevel(1, 10) == 2, "3 days or less: roll now");
+        Check(C.RollLevel(0, 10) == 3 && C.RollLevel(-5, 10) == 3, "today or past: expired");
+        Check(C.RollLevel(1, 0) == 0 && C.RollLevel(-5, 0) == 0, "0 switches it off");
+        Check(C.RollLevel(2, 2) == 2 && C.RollLevel(3, 2) == 0, "a window shorter than 3 days has no soon level");
+        Eq("in 40 days", C.DaysLeftText(40), "days left, plural");
+        Eq("tomorrow", C.DaysLeftText(1), "tomorrow");
+        Eq("today", C.DaysLeftText(0), "today");
+        Eq("yesterday", C.DaysLeftText(-1), "yesterday");
+        Eq("3 days ago", C.DaysLeftText(-3), "days ago");
     }
 
     private static void FillsAndCommands()
@@ -513,8 +543,8 @@ internal static class CoreTests
         Eq(double.NaN, C.EffectiveFloor(null, new DtnRiskSettings { Mode = C.ModeOff, OverrideFloor = 49000 }, out src), "off means off, even with a /floor setting");
     }
 
-    // ---------------------------------------------------------------- mutation survivors, arming, risk log and replay
-    private static void SurvivorsAndReadiness()
+    // ---------------------------------------------------------------- self-test checks, arming, risk log and replay
+    private static void SelfTestAndBoundaries()
     {
         DateTime t0 = Fri.AddHours(15);
 
@@ -631,7 +661,7 @@ internal static class CoreTests
               "replay of a restart after the account changed: CLOSING UNCERTAIN, mark not moved (no ticks are invented across the gap)");
     }
 
-    // ---------------------------------------------------------------- boundaries and degenerate inputs (found by the mutation sweep)
+    // ---------------------------------------------------------------- boundaries and degenerate inputs
     private static void Boundaries()
     {
         DateTime t0 = Fri.AddHours(15);
@@ -814,14 +844,14 @@ internal static class CoreTests
     // ---------------------------------------------------------------- what the second channel carries, and the open P&L watch
     private static void BackupAndOpenPnl()
     {
-        Eq("...001", C.MaskAccount("MFFUEVREOD729960001"), "an account is shown by its last three characters");
-        Eq("...003", C.MaskAccount(" MFFUEVREOD729960003 "), "...ignoring spaces");
+        Eq("...001", C.MaskAccount("MFFUEVREOD000000001"), "an account is shown by its last three characters");
+        Eq("...003", C.MaskAccount(" MFFUEVREOD000000003 "), "...ignoring spaces");
         Eq("F1", C.MaskAccount("F1"), "a short name is shown as is");
         Eq("abc", C.MaskAccount("abc"), "three characters: as is");
         Eq("...bcd", C.MaskAccount("abcd"), "four: the last three");
         Eq("", C.MaskAccount(null), "no name, nothing");
 
-        string a = C.MaskAccount("MFFUEVREOD729960001");
+        string a = C.MaskAccount("MFFUEVREOD000000001");
         string unknown = C.BackupMinimalText(new DtnRiskEvent { Kind = DtnRiskEventKind.Unknown, A = 0 }, a);
         string near = C.BackupMinimalText(new DtnRiskEvent { Kind = DtnRiskEventKind.RiskBuffer, D = 300, A = 48200.55, B = 48000, C = 200.55 }, a);
         string below = C.BackupMinimalText(new DtnRiskEvent { Kind = DtnRiskEventKind.RiskBuffer, D = 0, A = 47900.12, B = 48000, C = -99.88 }, a);

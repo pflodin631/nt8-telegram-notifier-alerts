@@ -25,8 +25,9 @@ using Dtn = NinjaTrader.NinjaScript.AddOns.DirectTelegramNotifierCore;
 // ============================================================================================
 //  DirectTelegramNotifier  -  NinjaTrader 8 AddOn
 //
-//  Telegram alerts and remote commands for NinjaTrader 8, talking straight to the Telegram Bot
-//  API over HttpClient (no Share Services, no third-party servers, no external DLLs).
+//  Telegram alerts, risk checks and remote commands for NinjaTrader 8, talking straight to the Telegram Bot
+//  API over HttpClient (no Share Services, no relay server, no external DLLs).
+//  Network traffic: api.telegram.org always; HeartbeatUrl and BackupAlertUrl only if you set them.
 //  Starts and stops with NinjaTrader itself, independent of any chart or workspace.
 //
 //  Alerts:    fills, connection loss/restore (orders and data), UI freeze, rejected orders,
@@ -40,7 +41,8 @@ using Dtn = NinjaTrader.NinjaScript.AddOns.DirectTelegramNotifierCore;
 //             (accepted only from AuthorizedChatID)
 //  Safety:    optional auto-flatten that LOCKS the account (re-entries are closed again until /unlock or
 //             the session ends); a short hold after /flatten that closes copier or strategy re-entries.
-//  Optional:  external heartbeat ping (dead-man's switch, e.g. Healthchecks.io) that stops when alerts can't be delivered.
+//  Optional:  external heartbeat ping (dead-man's switch, e.g. Healthchecks.io) that stops when alerts can't be delivered;
+//             a second channel (BackupAlertUrl) that gets a short version of the critical alerts.
 //
 //  Files:     this add-on is a partial class split across the DirectTelegramNotifier.*.cs files in this folder,
 //             plus DirectTelegramNotifier.Core.cs (pure logic, unit-tested outside NinjaTrader).
@@ -55,7 +57,7 @@ using Dtn = NinjaTrader.NinjaScript.AddOns.DirectTelegramNotifierCore;
 //     ignored, so a stale /flatten never runs after a restart or reboot.
 //   * /flatten covers the tracked account(s) only, unless UseGlobalFlattenEverything=true.
 //
-//  Version 0.5.1, MIT License. Not affiliated with or endorsed by NinjaTrader or Telegram.
+//  Version 0.6.0, MIT License. Not affiliated with or endorsed by NinjaTrader or Telegram.
 //  Provided as is, without warranty. Automated trading and remote order control carry risk.
 //
 //  Written in C# 5 syntax so it compiles on any NinjaScript compiler version.
@@ -85,7 +87,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         private const int    BackupDedupeSec      = 60;
         private const int    FlapThreshold        = 4;
         private const int    FlapWindowSec        = 300;
-        private const int    FlapMuteSec          = 300;
+        private const int    FlapSettleSec        = 600;     // no drop for this long, and up: the connection is stable again
+        private const int    FlapDownAlertSec     = 60;      // down this long while flapping: say so
+        private const int    FlapReminderSec      = 1800;    // still flapping: say so this often
         private const int    RunawayCooldownSec   = 300;
         private const int    StopMessageTimeoutMs = 3500;
         private const int    ConnectionMergeMs    = 1500;
@@ -105,7 +109,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private const int    DeliveryTestSec      = 300;          // while Telegram rejects sends, try a silent test message this often
         private const string DefaultStuckStates   = "Submitted,ChangePending,ChangeSubmitted,CancelPending,CancelSubmitted";
         private const string StateFileName        = "DirectTelegramNotifier.state";
-        private const string AddOnVersion        = "0.5.1";
+        private const string AddOnVersion        = "0.6.0";
         private const string HeartbeatFileName    = "DirectTelegramNotifier.heartbeat";
         private const string Sep                  = " \u00B7 ";
 
@@ -256,6 +260,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             public string Name;
             public string AccountName;
             public string State;
+            public CbiInstrument Instrument;
         }
 
         private sealed class RefComparer : IEqualityComparer<object>
@@ -337,6 +342,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private int    cfgMemoryAlertMb = 0;
         private int    cfgDiskAlertMb = 2000;
         private int    cfgFillGroupMs = 2000;
+        private int    cfgRollWarnDays = 10;
         private string cfgStaleDataQuietWindows = string.Empty;
         private string cfgStaleDataTimeZone = "Eastern Standard Time";
         private string staleZoneId = "Eastern Standard Time";
@@ -516,7 +522,17 @@ namespace NinjaTrader.NinjaScript.AddOns
 
 
         private readonly Dictionary<string, List<DateTime>> connDownHistory = new Dictionary<string, List<DateTime>>();
-        private readonly Dictionary<string, DateTime> connMutedUntilUtc = new Dictionary<string, DateTime>();
+        // One per connection that is flapping: its drops are counted but not announced one by one.
+        private sealed class FlapState
+        {
+            public DateTime Since;
+            public DateTime LastDrop;
+            public DateTime LastReminder;
+            public int Drops;
+            public bool DownAnnounced;
+        }
+        private readonly Dictionary<string, FlapState> connFlapping = new Dictionary<string, FlapState>(StringComparer.OrdinalIgnoreCase);
+        private TimeSpan connClockSkew = TimeSpan.Zero;          // only the tests move the connection clock with this
 
         #endregion
 
@@ -744,10 +760,13 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 CheckStaleData();
                 CheckCopyMismatch();
+                CheckFlappingConnections(FlapNow());
+                CheckContractRolls();
                 PruneTrackingSets();
                 CheckExposure();
                 CheckInactivity(DateTime.UtcNow);
-                CheckReadinessOnce();
+                RunStartupSelfTestOnce();
+                RunSoftwareCheck();
                 CheckDeliveryBackup(DateTime.UtcNow);
                 CheckMachineHealth();
                 CheckEndOfDay();

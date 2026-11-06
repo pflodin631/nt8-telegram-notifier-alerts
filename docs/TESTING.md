@@ -1,11 +1,11 @@
 # Testing
 
-There are five levels of testing, and they prove different things. The README's *Verified* table says which level each feature has reached.
+There are five levels of testing, and they prove different things. The table at the end of this page says which level each feature has reached. The first three run on GitHub Actions on every push.
 
 | Level | What it proves | How |
 |---|---|---|
-| **Unit tests** | The pure logic is right, including the whole risk state machine: floors, session rollover (weekend, overnight restart, an unwatched close), data outages while holding a position, daily loss, consistency, inactivity days, arming checks, the risk-log format, config-key checks, JSON. Boundaries are pinned (exactly 10 minutes unwatched, exactly 2.000 s at the limit, a 1.00 tolerance) | `tests\run-tests.ps1` (416 checks, no NinjaTrader needed) |
-| **Behavioural tests** | The whole add-on is wired correctly: commands, buttons, locks, queue, heartbeat, config loading, the flatten follow-up, the self-test, the backup channel, the risk log, `/simulate` | `bash tests/run-behavioral.sh` (Mono): compiles the add-on against a stand-in for the NinjaTrader API and drives it through its real entry points |
+| **Unit tests** | The pure logic is right, including all of the risk logic: floors, session rollover (weekend, overnight restart, an unwatched close), data outages while holding a position, daily loss, consistency, inactivity days, arming checks, the risk-log format, config keys and values, JSON. Boundary cases are tested (exactly 10 minutes unwatched, exactly 2.000 s at the limit, a 1.00 tolerance) | `bash tests/run-tests.sh` (Mono) or `tests\run-tests.ps1` (Windows); no NinjaTrader needed |
+| **Behavioural tests** | The whole add-on is wired correctly: commands, buttons, locks, queue, heartbeat, config loading (including the example files and unreadable values), the flatten follow-up, the self-test, the backup channel, the risk log, `/simulate` | `bash tests/run-behavioral.sh` (Mono): compiles the add-on against a stand-in for the NinjaTrader API and drives it through its real entry points |
 | **Replay tests** | A recorded session produces the decisions it should: real readings, fed back through the risk logic | `bash tests/run-replay.sh` (Mono) |
 | **Seen on Sim** | It behaves correctly inside real NinjaTrader with real events and your broker connection | The checklist below |
 | **Seen live** | The same, on a funded or evaluation account | Only after Sim |
@@ -14,13 +14,11 @@ The first three levels catch logic and wiring mistakes. **None of them can prove
 
 ## Unit tests
 
-```powershell
-powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1
+```bash
+bash tests/run-tests.sh
 ```
 
-It compiles `DirectTelegramNotifier.Core.cs` with the C# compiler built into Windows and prints `416 passed, 0 failed`. The risk state machine lives in that file as plain inputs and outputs (`EvaluateRisk`).
-
-**How good are they?** Every comparison, boolean operator, sign and `Math.Max`/`Math.Min` in the risk functions was mutated one at a time (273 mutants) and the tests rerun. Of those, 39 did not compile and 212 were caught. The other 22 I classified by hand: 19 are equivalent mutants that cannot change a result (for example an extra NaN guard whose comparison is false anyway), and the 3 real gaps were closed. The new 0.5.1 functions (account masking, the minimal backup text, the open-P&L watch) were swept separately: 31 mutants, 17 caught, 11 invalid, 3 equivalent survivors, two real gaps closed. That judgement is mine, not a tool's: if you doubt one, the mutations are easy to redo.
+On Windows: `powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1`, which uses the C# compiler built into Windows. Both compile `DirectTelegramNotifier.Core.cs` with `tests/CoreTests.cs` and print `N passed, 0 failed`. The risk rules live in that file as plain inputs and outputs (`EvaluateRisk`), so they can be tested without NinjaTrader.
 
 ## Behavioural tests
 
@@ -32,10 +30,10 @@ Needs Mono (`mcs`, `mono`). Six suites run against `tests/behavioral/NinjaTrader
 
 ## Replay tests
 
-With `EnableRiskLog=true` (the default) the add-on writes every reading the risk check sees to `Documents\NinjaTrader 8\DirectTelegramNotifier-risk.csv`, plus each account's rules when they change. `bash tests/run-replay.sh` runs every case in `tests/replay/cases` (a `risk.csv` and the `expected.txt` timeline it must produce). To look at a log you recorded:
+With `EnableRiskLog=true` (the default) the add-on writes every reading the risk check sees to `Documents\NinjaTrader 8\DirectTelegramNotifier-risk.csv`, plus each account's rules when they change. `bash tests/run-replay.sh` runs every case in `tests/replay/cases` (a `risk.csv` and the `expected.txt` timeline it must produce). The three cases in the repo are synthetic: one comes from a behavioural-test run against the stand-in API and two were written by hand to check one rule; each `risk.csv` says which at the top. A case recorded on a real Sim session is worth more (see below). To look at a log you recorded:
 
 ```bash
-bash tests/run-replay.sh path/to/DirectTelegramNotifier-risk.csv --account MFFUEVREOD729960002
+bash tests/run-replay.sh path/to/DirectTelegramNotifier-risk.csv --account MFFUEVREOD000000002
 ```
 
 **Turning something you saw on Sim into a permanent test:**
@@ -131,6 +129,44 @@ Settings: `InactivityDays=7`, `InactivityAlerts=2,1`.
 - [ ] With `HeartbeatUrl` set, unplug the network for longer than the Healthchecks grace time. The check goes down; reconnect and it recovers.
 - [ ] Block the bot in Telegram (or set a wrong `AuthorizedChatID`) while NinjaTrader is running and polling works. After about 3 minutes your Healthchecks check goes down. Fix it: within about 5 minutes **Delivery check** arrives and the check recovers. Route the Healthchecks alert to email or SMS, not Telegram.
 - [ ] Put a misspelled key in the config and press F5: you get **CONFIG WARNING** naming it.
+- [ ] Set `RiskAutoFlatten=maybe` and press F5: the CONFIG WARNING says automatic flatten is OFF. Then set `RiskAutoFlatten=true  # on` and check `/selftest` shows it switched on.
 - [ ] `/leader <account>` changes the leader shown in `/status`, and it survives a restart.
 
 Report anything that differs as an issue, with the Output window lines (redact tokens, IDs and account numbers).
+
+## What has been checked
+
+Unit tests cover the pure logic, including the risk rules. Behavioural tests compile the whole add-on against a stand-in for the NinjaTrader API and drive it through its real entry points. Replay tests feed recorded risk logs through the risk logic. All three run on every push ([docs/TESTING.md](docs/TESTING.md)). None of them can prove how NinjaTrader or your broker behaves, which is what the Sim column is for.
+
+✅ seen working inside NinjaTrader (Sim or evaluation account); ⬜ not yet. For rules that play out over days, ✅ means seen with seeded values (`/activity`, `/risk seed`); the last row is about real multi-day sessions.
+
+| Feature | Automated tests | Seen in NinjaTrader |
+|---|---|---|
+| Compiles in NinjaTrader 8.1.8.4 | C# 5 compile | ✅ 0.6.0 |
+| Fill alerts, partial fills, grouping | behavioural | ✅ |
+| `/flatten` (leader and followers), hold after `/flatten` | behavioural | ✅ |
+| Connection, restart, rejected-order, order-rate and strategy alerts | partly | ✅ |
+| Unstable connection: one alert, a lasting outage still reported, a summary when stable | behavioural | ⬜ (an earlier version of this was seen live and was too noisy; this one has not been) |
+| `/status`, `/copy`, `/simulate`, `FlattenConfirm` buttons | behavioural | ✅ |
+| Problem alerts sent before routine ones; routine ones merged | behavioural | ✅ |
+| Heartbeat ping | — | ✅ |
+| Heartbeat held when Telegram refuses messages | behavioural | ⬜ |
+| Stale-data alerts, custom schedules | unit (windows) | ⬜ |
+| Contract roll warnings and the Contracts block in `/status` | unit, behavioural | ⬜ |
+| Copier mismatch alerts, `/leader` | behavioural | ✅ |
+| Unprotected, orphan, stuck and position-limit alerts | behavioural | ✅ |
+| Floors, `/floor` validation, static and intraday modes | unit, behavioural | ✅ |
+| Daily loss limit, auto-flatten and account lock | unit, behavioural | ✅ |
+| Risk UNKNOWN, reminders, optional flatten | unit, behavioural, replay | ✅ |
+| A flat account is not risk-checked while its connection is down or it reads 0.00 net liq | behavioural | ⬜ (the problem was seen live; the fix has not been) |
+| End-of-day trailing, `/risk seed`, closing-uncertain warning | unit, behavioural, replay | ✅ |
+| Consistency cap and alerts, inactivity clock and `/activity` | unit, behavioural | ✅ |
+| Several confirmations pending at once, `LockGroup` | behavioural | ⬜ |
+| Self-test, flatten follow-up, `/unlock` confirmation | unit, behavioural | ✅ |
+| SOFTWARE CHANGED when NinjaTrader or Replikanto changes between starts; versions in `/version` | behavioural | ⬜ (needs NinjaTrader to confirm the versions can be read) |
+| Backup channel (`/testbackup`, routing, Telegram-down alert) | unit, behavioural | ⬜ |
+| Risk log and replay of a real session | unit, replay | ⬜ |
+| Config warnings, including unreadable values and a `LeaderAccount` that is not in `AccountName` | unit, behavioural | ⬜ |
+| No account assumed to be a copier leader; copy check on only when `LeaderAccount` is set | behavioural | ⬜ |
+| CPU, memory and disk alerts; end-of-day summary | behavioural | ✅ |
+| End-of-day trailing, best day and inactivity count matching the firm over several real sessions | — | ⬜ |

@@ -1,0 +1,8 @@
+# Synthetic: produced by the behavioural test suite 06 (stand-in NinjaTrader API, simulated clock), not recorded on a live account.
+# G1 holds a position with RiskFloor=48000 and UnknownFlattenSeconds=120; its data connection goes down at 15:00:10.
+S,2026-10-30T15:00:00.000,G1,mode=manual;basis=balance;drawdown=2000;lock=;start=;override=;manual=48000;cpct=;ctarget=;daily=;buffers=300|750|1500;dalerts=;calerts=;raf=0;fbuf=150;daf=0;caf=0;confirm=2;unkflat=120;remind=60;gap=10;tol=1
+R,2026-10-30T15:00:00.000,G1,2026-10-27,50000,50000,,
+R,2026-10-30T15:00:10.000,G1,2026-10-27,50000,50000,this account's data connection is down,
+R,2026-10-30T15:00:40.000,G1,2026-10-27,50000,50000,this account's data connection is down,
+R,2026-10-30T15:01:10.000,G1,2026-10-27,50000,50000,this account's data connection is down,
+R,2026-10-30T15:02:10.000,G1,2026-10-27,50000,50000,this account's data connection is down,

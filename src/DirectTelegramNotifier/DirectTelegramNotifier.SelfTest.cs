@@ -22,27 +22,19 @@ using CbiPosition = NinjaTrader.Cbi.Position;
 using Dtn = NinjaTrader.NinjaScript.AddOns.DirectTelegramNotifierCore;
 #endregion
 
-// DirectTelegramNotifier: is it working? The readiness self-test, the follow-up that checks a flatten really worked, the risk log
-// that records what the risk check saw, and the optional second alert channel.
+// DirectTelegramNotifier: the self-test (/selftest, and once after startup) and the follow-up that checks a flatten really went flat.
 // One part of a partial class: see DirectTelegramNotifier.cs for the overview.
 
 namespace NinjaTrader.NinjaScript.AddOns
 {
     public partial class DirectTelegramNotifier
     {
-        #region Readiness (self-test)
+        #region Self-test
 
-        private bool readinessChecked;
+        private bool startupSelfTestDone;
         private int exposureRepeatMs = 60000;                 // how often STILL EXPOSED is repeated; the tests shorten it
         private const int ExposureRepeatLockMinutes = 720;    // runaway guard for a locked account
         private const int ExposureRepeatFlattenMinutes = 10;  // after a /flatten that did not complete
-
-        // An alert that also goes to the second channel: the full text for Telegram, and what the third-party service gets.
-        private sealed class CriticalAlert
-        {
-            public string Full;
-            public string Minimal;
-        }
 
         private readonly object pnlWatchLock = new object();
         private readonly Dictionary<string, DtnOpenPnlWatch> pnlWatches = new Dictionary<string, DtnOpenPnlWatch>(StringComparer.OrdinalIgnoreCase);
@@ -69,7 +61,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 + "<i>End the day flat, or check /risk against your firm's figure and use /risk seed. A fee can cause a false alarm.</i>";
         }
 
-        private sealed class Readiness
+        private sealed class SelfTestResult
         {
             public readonly List<string> Lines = new List<string>();
             public readonly List<string> Armed = new List<string>();
@@ -79,9 +71,9 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         // Reads what the risk check depends on, for every tracked account, and says whether automatic flatten could act.
         // It does not gate anything: the risk check already does nothing without these inputs. It makes that visible.
-        private Readiness AssessReadiness()
+        private SelfTestResult RunSelfTest()
         {
-            Readiness r = new Readiness();
+            SelfTestResult r = new SelfTestResult();
             foreach (CbiAccount a in SnapshotTrackedAccounts())
             {
                 string name = a.Name;
@@ -158,7 +150,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             return r;
         }
 
-        private static string AutoFlattenSummary(Readiness r)
+        private static string AutoFlattenSummary(SelfTestResult r)
         {
             if (!r.AnyAuto)
                 return "off";
@@ -172,10 +164,10 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private string AutoFlattenLine()
         {
-            return "Auto-flatten: " + AutoFlattenSummary(AssessReadiness());
+            return "Auto-flatten: " + AutoFlattenSummary(RunSelfTest());
         }
 
-        private string BuildSelfTestText(Readiness r)
+        private string BuildSelfTestText(SelfTestResult r)
         {
             StringBuilder sb = new StringBuilder();
             sb.Append(EmInfo).Append(" <b>SELF-TEST</b>").Append(Sep).Append(TimeText(NtNow())).Append("\n");
@@ -190,14 +182,14 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         // Once, shortly after startup, when the accounts have attached and the first readings are in.
-        private void CheckReadinessOnce()
+        private void RunStartupSelfTestOnce()
         {
-            if (readinessChecked || !started || (DateTime.UtcNow - startedUtc).TotalSeconds < 20)
+            if (startupSelfTestDone || !started || (DateTime.UtcNow - startedUtc).TotalSeconds < 20)
                 return;
-            readinessChecked = true;
+            startupSelfTestDone = true;
             try
             {
-                Readiness r = AssessReadiness();
+                SelfTestResult r = RunSelfTest();
                 string text = BuildSelfTestText(r);
                 if (r.AnyAuto && r.NotArmed.Count > 0)
                     EnqueueText(text);                      // you switched auto-flatten on and it cannot act: say so loudly
@@ -327,233 +319,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                     EnqueueCritical(MsgStillExposed(string.Join(", ", exposed.Select(w => w.Name).ToArray()), what, seconds, check), StillExposedMinimal(exposed, seconds));
                 }
             }, "Exposure repeat");
-        }
-
-        #endregion
-
-        #region Risk log (record what the risk check saw, so a real session can be replayed)
-
-        private string riskLogPath;
-        private int riskLogWrites;
-        private readonly object riskLogLock = new object();
-        private readonly Dictionary<string, string> riskLogSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, string> riskLogKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, DateTime> riskLogLast = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
-
-        // One row when a reading changes (and at least every RiskLogKeepaliveSec): enough to hold the reading between rows and
-        // tick once a second, which is what the live check does. Settings are written when they change.
-        private void RecordRiskReading(string account, DateTime now, DtnRiskInput input)
-        {
-            if (!cfgEnableRiskLog)
-                return;
-            try
-            {
-                string settingsText = Dtn.SettingsToText(input.Settings);
-                string key = Dtn.FormatReadingRow(DateTime.MinValue, account, input);
-                lock (riskLogLock)
-                {
-                    string previousSettings, previousKey;
-                    DateTime previousAt;
-                    bool settingsChanged = !riskLogSettings.TryGetValue(account, out previousSettings) || previousSettings != settingsText;
-                    bool changed = !riskLogKey.TryGetValue(account, out previousKey) || previousKey != key;
-                    bool due = !riskLogLast.TryGetValue(account, out previousAt) || (now - previousAt).TotalSeconds >= RiskLogKeepaliveSec;
-                    if (!settingsChanged && !changed && !due)
-                        return;
-
-                    StringBuilder rows = new StringBuilder();
-                    if (settingsChanged)
-                    {
-                        rows.Append(Dtn.FormatSettingsRow(now, account, input.Settings)).Append("\r\n");
-                        riskLogSettings[account] = settingsText;
-                    }
-                    rows.Append(Dtn.FormatReadingRow(now, account, input)).Append("\r\n");
-                    riskLogKey[account] = key;
-                    riskLogLast[account] = now;
-                    AppendRiskLogLocked(rows.ToString());
-                }
-            }
-            catch (Exception)
-            {
-                // Recording must never interfere with the risk check.
-            }
-        }
-
-        private void AppendRiskLogLocked(string text)
-        {
-            if (riskLogPath == null)
-                riskLogPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(ConfigPath()), "DirectTelegramNotifier-risk.csv");
-            FileInfo info = new FileInfo(riskLogPath);
-            if (info.Exists && ++riskLogWrites % 200 == 0 && info.Length > RiskLogMaxBytes)
-            {
-                string old = riskLogPath + ".old";
-                if (File.Exists(old))
-                    File.Delete(old);
-                File.Move(riskLogPath, old);
-                info = new FileInfo(riskLogPath);
-            }
-            if (!info.Exists)
-                File.AppendAllText(riskLogPath, "# DirectTelegramNotifier risk log. S = an account's rules, R = one reading. Replay it with tests/run-replay.sh (see docs/TESTING.md)." + "\r\n", new UTF8Encoding(false));
-            File.AppendAllText(riskLogPath, text, new UTF8Encoding(false));
-        }
-
-        #endregion
-
-        #region Second alert channel (optional)
-
-        private readonly object backupLock = new object();
-        private readonly Dictionary<string, DateTime> backupRecent = new Dictionary<string, DateTime>();
-        private Func<string, string, string, Task> backupPost;           // url, body, content type; the tests replace it
-        private bool backupDeliveryDown;
-        private DateTime lastDeliveryBackupCheckUtc = DateTime.MinValue;
-
-        // To Telegram, and to the backup channel when there is one.
-        private void EnqueueCritical(string full, string minimal)
-        {
-            EnqueueText(full);
-            SendBackup(full, minimal);
-        }
-
-        private static string JsonText(string s)
-        {
-            StringBuilder sb = new StringBuilder("\"");
-            foreach (char c in s ?? string.Empty)
-            {
-                switch (c)
-                {
-                    case '"': sb.Append("\\\""); break;
-                    case '\\': sb.Append("\\\\"); break;
-                    case '\n': sb.Append("\\n"); break;
-                    case '\r': sb.Append("\\r"); break;
-                    case '\t': sb.Append("\\t"); break;
-                    default:
-                        if (c < 0x20)
-                            sb.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
-                        else
-                            sb.Append(c);
-                        break;
-                }
-            }
-            return sb.Append('"').ToString();
-        }
-
-        private string BackupBody(string plain, out string contentType)
-        {
-            string line = "[NT8 notifier] " + plain;
-            if (cfgBackupFormat == "json")
-            {
-                contentType = "application/json";
-                string t = JsonText(line);
-                return "{\"text\":" + t + ",\"content\":" + t + ",\"message\":" + t + "}";
-            }
-            contentType = "text/plain";
-            return line;
-        }
-
-        // Fire and forget, with one retry. The same text is not sent twice within a minute.
-        // The channel is a third-party service: by default it gets the minimal text (no amounts), not the full alert.
-        private void SendBackup(string full, string minimal)
-        {
-            if (string.IsNullOrEmpty(cfgBackupUrl) || terminated)
-                return;
-            string plain = ToPlainText(cfgBackupDetail == "full" ? full : minimal).Replace("\r", string.Empty).Trim();
-            if (plain.Length == 0)
-                return;
-            DateTime now = DateTime.UtcNow;
-            lock (backupLock)
-            {
-                DateTime last;
-                if (backupRecent.TryGetValue(plain, out last) && (now - last).TotalSeconds < BackupDedupeSec)
-                    return;
-                backupRecent[plain] = now;
-                if (backupRecent.Count > 40)
-                {
-                    foreach (string old in backupRecent.Where(kv => (now - kv.Value).TotalSeconds > 600).Select(kv => kv.Key).ToList())
-                        backupRecent.Remove(old);
-                }
-            }
-
-            string type;
-            string body = BackupBody(plain, out type);
-            string url = cfgBackupUrl;
-            Task.Run(async () =>
-            {
-                for (int attempt = 1; attempt <= 2; attempt++)
-                {
-                    try
-                    {
-                        await PostBackupAsync(url, body, type);
-                        return;
-                    }
-                    catch (Exception ex)
-                    {
-                        if (attempt == 2)
-                            WriteThrottled("Backup alert failed: " + Describe(ex));
-                        else
-                            await Task.Delay(3000);
-                    }
-                }
-            });
-        }
-
-        private async Task PostBackupAsync(string url, string body, string contentType)
-        {
-            Func<string, string, string, Task> custom = backupPost;
-            if (custom != null)
-            {
-                await custom(url, body, contentType);
-                return;
-            }
-            using (CancellationTokenSource cts = new CancellationTokenSource(10000))
-            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, url))
-            {
-                request.Content = new StringContent(body, Encoding.UTF8, contentType);
-                request.Headers.TryAddWithoutValidation("Title", "NT8 notifier");
-                request.Headers.TryAddWithoutValidation("Priority", "urgent");
-                using (HttpResponseMessage response = await Http.SendAsync(request, cts.Token))
-                {
-                    if (!response.IsSuccessStatusCode)
-                        throw new InvalidOperationException("HTTP " + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture));
-                }
-            }
-        }
-
-        private async Task<string> TestBackupAsync()
-        {
-            if (string.IsNullOrEmpty(cfgBackupUrl))
-                return EmInfo + " BackupAlertUrl is not set, so there is no backup channel. See the config file.";
-            string type;
-            string body = BackupBody("Test: the backup alert channel works (" + TimeText(NtNow()) + ").", out type);
-            try
-            {
-                await PostBackupAsync(cfgBackupUrl, body, type);
-                return EmOk + " Test sent to the backup channel (" + cfgBackupFormat + "). Check that it arrived on your phone.";
-            }
-            catch (Exception ex)
-            {
-                return EmWarn + " The backup channel FAILED: " + Html(Redact(Describe(ex)));
-            }
-        }
-
-        // The case Telegram cannot report on itself: its alerts are not getting through. Say so through the other channel.
-        private void CheckDeliveryBackup(DateTime now)
-        {
-            if (string.IsNullOrEmpty(cfgBackupUrl) || (now - lastDeliveryBackupCheckUtc).TotalSeconds < 30)
-                return;
-            lastDeliveryBackupCheckUtc = now;
-            string problem = DeliveryProblem(now);
-            if (problem != null && !backupDeliveryDown)
-            {
-                backupDeliveryDown = true;
-                int priority;
-                string down = "Telegram alerts are NOT getting through: " + problem + ". " + Num(QueuedCount(out priority)) + " waiting. "
-                    + "Critical alerts still come through this channel. Check NinjaTrader and your positions.";
-                SendBackup(down, down);
-            }
-            else if (problem == null && backupDeliveryDown)
-            {
-                backupDeliveryDown = false;
-                SendBackup("Telegram alerts are getting through again.", "Telegram alerts are getting through again.");
-            }
         }
 
         #endregion

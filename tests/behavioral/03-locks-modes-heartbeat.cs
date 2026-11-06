@@ -64,7 +64,7 @@ class H5
         var tracked = (IList)Get("trackedAccounts"); tracked.Add(L); tracked.Add(F1); tracked.Add(F2);
         List<Msg> d;
 
-        Console.WriteLine("\n--- 1. auto-flatten latches the account; re-entries are closed at once");
+        Console.WriteLine("\n--- 1. auto-flatten locks the account; re-entries are closed at once");
         Set("cfgRiskAutoFlatten", true); Set("cfgRiskFlattenBuffer", 150.0); Set("cfgRiskConfirmSec", 2);
         Setting("RiskFloor", "F1", "50000");
         Pos(F1, MarketPosition.Long, 3); F1.NetLiq = 50100; DateTime t0 = DateTime.UtcNow;
@@ -146,7 +146,7 @@ class H5
         Wait((Task)Call("HandleUpdateAsync", Update("/version")));
         d = Drain();
         Check("the /flatten handler returns at once (" + ms + " ms, verification runs in the background)", ms < 1000);
-        Check("a command sent right after /flatten is answered before the flatten report", d.Count >= 1 && d[0].Text.Contains("v0.5.1"));
+        Check("a command sent right after /flatten is answered before the flatten report", d.Count >= 1 && d[0].Text.Contains("v" + (string)T.GetField("AddOnVersion", B).GetValue(null)));
         Thread.Sleep(3200); d = Drain();
         Check("the flatten report still arrives after its 2.5s check", Any(d, "FLATTEN SENT"));
         foreach (string a in new[] { "LEAD", "F1", "F2" }) ((IDictionary)Get("accountLocks")).Remove(a);
@@ -269,7 +269,7 @@ class H5
         Check("Telegram's 429 sets a gate for every message (" + gate.ToString("0.0") + "s)", gate > 6 && gate <= 7);
         Set("rateLimitedUntilUtc", DateTime.MinValue);
 
-        Console.WriteLine("\n--- 11. external heartbeat vouches for delivery");
+        Console.WriteLine("\n--- 11. external heartbeat is held while alerts are not delivered");
         Set("cfgHeartbeatUrl", "https://hc-ping.example/abc"); Set("resolvedToken", "");
         Set("lastSendOkUtc", DateTime.UtcNow.AddSeconds(-10));
         Check("recent successful send -> heartbeat OK", Call("DeliveryProblem", DateTime.UtcNow) == null);
@@ -312,7 +312,138 @@ class H5
         Check("/leader F1 makes F1 the leader", (string)Call("ResolveLeaderName") == "F1" && reply.Contains("Leader is now F1"));
         Check("the leader choice is saved", System.IO.File.ReadAllText(Dir + "/DirectTelegramNotifier.state").Contains("leader=F1"));
         Call("HandleLeaderCommand", "clear");
-        Check("/leader clear goes back to the config file", (string)Call("ResolveLeaderName") == "LEAD");
+        Check("/leader clear goes back to the config file, which names no leader", (string)Call("ResolveLeaderName") == "");
+
+        Console.WriteLine("\n--- 13. no LeaderAccount: every account is independent, nothing is assumed to be a leader");
+        Check("the first account in AccountName is not treated as the leader", (string)Call("ResolveLeaderName") == "" && ((string)Get("cfgAccountName")).StartsWith("LEAD"));
+        reply = Plain((string)Call("HandleLeaderCommand", ""));
+        Check("/leader says there is no leader", reply.Contains("Leader: none"));
+        Check("/status says the copy check is off, and why", Plain((string)Call("BuildCopyStatusLine")).Contains("Copy check: off") && Plain((string)Call("BuildCopyStatusLine")).Contains("LeaderAccount"));
+        Set("cfgMismatchSeconds", 1);
+        Pos(L, MarketPosition.Long, 2); Pos(F1, MarketPosition.Flat, 0); Pos(F2, MarketPosition.Flat, 0); Drain();
+        for (int i = 0; i < 3; i++) { Call("CheckCopyMismatch"); Thread.Sleep(1200); }
+        Call("CheckCopyMismatch"); d = Drain();
+        Check("one account long while the others are flat raises no copy alert", !Any(d, "COPY"));
+        Set("cfgLeaderAccount", "LEAD");
+        Check("with LeaderAccount set, the status line names the leader and its followers", Plain((string)Call("BuildCopyStatusLine")).Contains("leader LEAD") && Plain((string)Call("BuildCopyStatusLine")).Contains("2 followers"));
+        for (int i = 0; i < 3; i++) { Call("CheckCopyMismatch"); Thread.Sleep(1200); }
+        Call("CheckCopyMismatch"); d = Drain();
+        Check("the same positions now raise the copy alert (the check itself still works)", Any(d, "leader LEAD"));
+        Pos(L, MarketPosition.Flat, 0); Set("cfgLeaderAccount", "");
+
+        Console.WriteLine("\n--- 14. a connection that keeps dropping: one alert, then quiet, then an honest ending (the real MFFU flapping sent one every 5 min for an hour)");
+        int merge = Convert.ToInt32(T.GetField("ConnectionMergeMs", B).GetValue(null)) + 500;
+        Action<string, string, bool> flip = (c, ch, down) => Call("EvaluateChannel", c, ch, down ? ConnectionStatus.Connected : ConnectionStatus.ConnectionLost, down ? ConnectionStatus.ConnectionLost : ConnectionStatus.Connected, "Bye");
+        Func<string, int> count = needle => d.Count(m => m.Text.Contains(needle));
+        Set("connClockSkew", TimeSpan.Zero); Drain();
+        flip("MFFU", "orders", true); Thread.Sleep(merge); d = Drain();
+        Check("a first drop is announced as before", count("CONNECTION LOST") == 1);
+        flip("MFFU", "orders", false); Thread.Sleep(merge); d = Drain();
+        Check("...and so is the reconnect, with how long it was down", count("RECONNECTED") == 1 && Regex.IsMatch(Plain(d[0].Text), @"Down for \d+s"));
+        flip("MFFU", "orders", true); flip("MFFU", "orders", false); Thread.Sleep(merge); d = Drain();
+        Check("a sub-second outage is worded as such, not 'Down for 0s'", Plain(d.First(m => m.Text.Contains("RECONNECTED")).Text).Contains("Down for under 1s"));
+        flip("MFFU", "orders", true); flip("MFFU", "orders", false); Thread.Sleep(merge);
+        Drain();
+        flip("MFFU", "orders", true); flip("MFFU", "data", true); Thread.Sleep(merge); d = Drain();
+        Check("the 4th drop within five minutes: exactly one CONNECTION UNSTABLE, no LOST", count("CONNECTION UNSTABLE") == 1 && count("CONNECTION LOST") == 0);
+        Check("it names the connection and the drops counted", Plain(d.First(m => m.Text.Contains("CONNECTION UNSTABLE")).Text).Contains("MFFU") && Plain(d.First(m => m.Text.Contains("CONNECTION UNSTABLE")).Text).Contains("orders 4"));
+        flip("MFFU", "orders", false); flip("MFFU", "data", false);
+        for (int i = 0; i < 20; i++) { flip("MFFU", "orders", true); flip("MFFU", "orders", false); flip("MFFU", "data", true); flip("MFFU", "data", false); }
+        Set("connClockSkew", TimeSpan.FromMinutes(6));
+        for (int i = 0; i < 5; i++) { flip("MFFU", "orders", true); flip("MFFU", "orders", false); flip("MFFU", "data", true); flip("MFFU", "data", false); }
+        Thread.Sleep(merge); d = Drain();
+        Check("50 more drops, past the point where the old 5-minute mute would have ended: nothing is announced", d.Count == 0);
+        flip("MFFU", "orders", true); DateTime n1 = (DateTime)Call("FlapNow");
+        Call("CheckFlappingConnections", n1.AddSeconds(30)); d = Drain();
+        Check("down for 30 s: still nothing", d.Count == 0);
+        Call("CheckFlappingConnections", n1.AddSeconds(70)); d = Drain();
+        Check("down for 70 s while flapping: CONNECTION DOWN, loud", count("CONNECTION DOWN") == 1 && d.Any(m => m.Text.Contains("CONNECTION DOWN") && !m.Silent && m.Priority));
+        Call("CheckFlappingConnections", n1.AddSeconds(80)); d = Drain();
+        Check("...said once", d.Count == 0);
+        flip("MFFU", "orders", false); Call("CheckFlappingConnections", n1.AddSeconds(85)); d = Drain();
+        Check("when it is back, RECONNECTED, and that it still counts as flapping", count("RECONNECTED") == 1 && Plain(d[0].Text).Contains("Still counted as unstable"));
+        Set("connClockSkew", TimeSpan.FromMinutes(6 + 31)); flip("MFFU", "orders", true); flip("MFFU", "orders", false); DateTime n2 = (DateTime)Call("FlapNow");
+        Call("CheckFlappingConnections", n2.AddSeconds(5)); d = Drain();
+        Check("still dropping 31 minutes on: one STILL UNSTABLE with the count", count("STILL UNSTABLE") == 1 && Regex.IsMatch(Plain(d[0].Text), @"\d+ drops in"));
+        Call("CheckFlappingConnections", n2.AddSeconds(10)); d = Drain();
+        Check("...not again straight away", d.Count == 0);
+        Call("CheckFlappingConnections", n2.AddSeconds(700)); d = Drain();
+        Check("10 quiet minutes and up: one CONNECTION STABLE with the total", count("CONNECTION STABLE") == 1 && Regex.IsMatch(Plain(d[0].Text), @"It dropped \d+ times over"));
+        Call("CheckFlappingConnections", n2.AddSeconds(710)); d = Drain();
+        Check("...once", d.Count == 0);
+        flip("MFFU", "orders", true); Thread.Sleep(merge); d = Drain();
+        Check("after it settled, a new drop is announced normally again", count("CONNECTION LOST") == 1 && count("CONNECTION UNSTABLE") == 0);
+        flip("MFFU", "orders", false); Thread.Sleep(merge); Drain(); Set("connClockSkew", TimeSpan.Zero);
+
+        Console.WriteLine("\n--- 15. contract roll warnings (a bot or a copier tab left on an expired contract fails quietly)");
+        DateTime today = DateTime.Now.Date;
+        var dict = (System.Collections.IDictionary)Get("tradedInstruments");
+        var alerted = (System.Collections.IDictionary)Get("rollAlerted");
+        var dec26 = new NinjaTrader.Cbi.Instrument { FullName = "MNQ DEC26", Expiry = today.AddDays(40), MasterInstrument = new NinjaTrader.Cbi.MasterInstrument() };
+        Func<string> contracts = () => Plain((string)Call("BuildContractLines"));
+        Action recheck = () => { Call("RefreshRolls", true); Call("CheckContractRolls"); };
+        Set("cfgRollWarnDays", 10); dict.Clear(); alerted.Clear(); Drain();
+        dict["MNQ DEC26"] = dec26; recheck(); d = Drain();
+        Check("40 days out: listed with its date and days left, no alert, no marker", d.Count == 0 && contracts().Contains("MNQ DEC26") && contracts().Contains("in 40 days") && !contracts().Contains("roll"));
+        dec26.Expiry = today.AddDays(9); recheck(); d = Drain();
+        Check("9 days out: one ROLL SOON with the date and the days left", count("ROLL SOON") == 1 && Plain(d[0].Text).Contains("in 9 days")
+            && Plain(d[0].Text).Contains(today.AddDays(9).ToString("ddd d MMM", System.Globalization.CultureInfo.InvariantCulture)));
+        recheck(); d = Drain();
+        Check("...said once", d.Count == 0);
+        Check("/status marks it", contracts().Contains("roll soon"));
+        dec26.Expiry = today.AddDays(2); recheck(); d = Drain();
+        Check("2 days out: ROLL NOW, and loud", count("ROLL NOW") == 1 && d.Any(m => m.Text.Contains("ROLL NOW") && !m.Silent && m.Priority));
+        dec26.Expiry = today; recheck(); d = Drain();
+        Check("the expiry day: CONTRACT EXPIRES TODAY", count("CONTRACT EXPIRES TODAY") == 1);
+        dec26.Expiry = today.AddDays(-2); recheck(); d = Drain();
+        Check("after it: nothing more is sent, /status says expired", d.Count == 0 && contracts().Contains("expired") && contracts().Contains("2 days ago"));
+        Check("the end-of-day report carries it while it is inside the window", Plain((string)Call("BuildRollEodLine")).Contains("MNQ DEC26"));
+
+        dict.Clear(); alerted.Clear(); Drain();
+        var mar = new NinjaTrader.Cbi.Instrument { FullName = "MNQ MAR27", Expiry = today.AddDays(5), MasterInstrument = new NinjaTrader.Cbi.MasterInstrument() };
+        Type si = T.GetNestedType("StrategyInfo", BindingFlags.NonPublic | BindingFlags.Public);
+        object info = Activator.CreateInstance(si);
+        si.GetField("Ref").SetValue(info, info); si.GetField("Name").SetValue(info, "TestBot"); si.GetField("AccountName").SetValue(info, "F1");
+        si.GetField("State").SetValue(info, "Realtime"); si.GetField("Instrument").SetValue(info, mar);
+        ((System.Collections.IDictionary)Get("strategies"))[info] = info;
+        recheck(); d = Drain();
+        Check("a running strategy's contract is checked although nothing is held or traded, and the alert names it",
+            count("ROLL SOON") == 1 && Plain(d[0].Text).Contains("In use: strategy TestBot (F1)"));
+        si.GetField("State").SetValue(info, "Terminated"); Call("RefreshRolls", true);
+        Check("a terminated strategy's contract is no longer listed", !contracts().Contains("MNQ MAR27"));
+        si.GetField("State").SetValue(info, "Realtime"); alerted.Clear(); Set("cfgRollWarnDays", 0); recheck(); d = Drain();
+        Check("RollWarnDays=0: no alerts and no markers, the dates are still shown", d.Count == 0 && contracts().Contains("MNQ MAR27") && contracts().Contains("in 5 days") && !contracts().Contains("roll"));
+        Check("...and nothing in the end-of-day report", ((string)Call("BuildRollEodLine")).Length == 0);
+        dict["SPY"] = new NinjaTrader.Cbi.Instrument { FullName = "SPY", MasterInstrument = new NinjaTrader.Cbi.MasterInstrument() };
+        Call("RefreshRolls", true);
+        Check("an instrument with no expiry is not listed", !contracts().Contains("SPY"));
+        ((System.Collections.IDictionary)Get("strategies")).Remove(info); dict.Clear(); alerted.Clear(); Set("cfgRollWarnDays", 10); Call("RefreshRolls", true); Drain();
+
+        Console.WriteLine("\n--- 15. NinjaTrader or Replikanto changed between two starts (NinjaTrader updates itself)");
+        Set("started", true); Set("startedUtc", DateTime.UtcNow.AddMinutes(-5)); Set("knownSoftware", ""); Set("softwareDone", false);
+        Set("softwareOverride", new[] { "8.1.8.4", "1.7.1.0" }); Drain();
+        Call("RunSoftwareCheck"); d = Drain();
+        Check("the first time it only remembers what it sees: no message", d.Count == 0 && (string)Get("knownSoftware") == "nt=8.1.8.4;rep=1.7.1.0");
+        Set("softwareDone", false); Call("RunSoftwareCheck"); d = Drain();
+        Check("the same versions at the next start: nothing", d.Count == 0);
+        Set("softwareDone", false); Set("softwareOverride", new[] { "8.1.8.5", "1.7.1.0" }); Call("RunSoftwareCheck"); d = Drain();
+        string swText = d.Count == 1 ? Plain(d[0].Text) : "";
+        Check("NinjaTrader updated: one SOFTWARE CHANGED naming both versions", count("SOFTWARE CHANGED") == 1 && swText.Contains("8.1.8.4") && swText.Contains("8.1.8.5"));
+        Check("...and it does not mention Replikanto, which did not change", !swText.Contains("Replikanto not") && !swText.Contains("Replikanto 1.7"));
+        Set("softwareDone", false); Set("softwareOverride", new[] { "8.1.8.5", "1.7.2.0" }); Call("RunSoftwareCheck"); d = Drain();
+        Check("Replikanto updated: its old and new version", count("SOFTWARE CHANGED") == 1 && Plain(d[0].Text).Contains("1.7.1.0") && Plain(d[0].Text).Contains("1.7.2.0") && !Plain(d[0].Text).Contains("NinjaTrader 8"));
+        Set("softwareDone", false); Set("softwareOverride", new[] { "8.1.8.5", "" }); Set("startedUtc", DateTime.UtcNow.AddSeconds(-30)); Call("RunSoftwareCheck"); d = Drain();
+        Check("Replikanto not loaded 30 s after the start: no alarm yet, it looks again", d.Count == 0 && !(bool)Get("softwareDone"));
+        Set("startedUtc", DateTime.UtcNow.AddMinutes(-3)); Call("RunSoftwareCheck"); d = Drain();
+        Check("still missing after the grace period: says so, with the version it had", count("SOFTWARE CHANGED") == 1 && Plain(d[0].Text).Contains("Replikanto not detected (was 1.7.2.0)"));
+        Call("SaveRiskState");
+        Check("the versions are kept in the state file", System.IO.File.ReadAllText((string)Call("StatePath")).Contains("software=nt=8.1.8.5;rep="));
+        Set("softwareDone", false); Set("softwareOverride", new[] { "8.1.8.5", "" }); Call("RunSoftwareCheck"); d = Drain();
+        Check("the next start with it still missing: not repeated", d.Count == 0);
+        Set("softwareOverride", new[] { "8.1.8.5", "1.7.2.0" });
+        Wait((Task)Call("HandleUpdateAsync", Update("/version"))); d = Drain();
+        Check("/version shows both versions", d.Count == 1 && Plain(d[0].Text).Contains("NinjaTrader 8.1.8.5") && Plain(d[0].Text).Contains("Replikanto 1.7.2.0") && Plain(d[0].Text).Contains("DirectTelegramNotifier v"));
+        Set("softwareOverride", null);
 
         Console.WriteLine("\n" + passes + " passed, " + fails + " failed");
         Environment.Exit(fails == 0 ? 0 : 1);

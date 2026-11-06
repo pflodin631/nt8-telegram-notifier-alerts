@@ -41,210 +41,134 @@ namespace NinjaTrader.NinjaScript.AddOns
             return System.IO.Path.Combine(dir, ConfigFileName);
         }
 
+        // The config file written on first run: the common settings first, then every advanced setting at its default.
         private static string DefaultConfigText()
         {
             return ""
-                 + "# DirectTelegramNotifier configuration\r\n"
-                 + "# After editing: press F5 in the NinjaScript Editor, or restart NinjaTrader.\r\n"
+                 + "# DirectTelegramNotifier settings\r\n"
+                 + "# After editing, press F5 in the NinjaScript Editor or restart NinjaTrader.\r\n"
+                 + "# Anything after a # is a comment. A value the notifier cannot read is reported in Telegram at startup.\r\n"
+                 + "# Common settings first; advanced ones at the bottom, at their defaults. All settings: docs/configuration.md\r\n"
                  + "\r\n"
                  + "# --- Telegram ---\r\n"
-                 + "# BotToken: from @BotFather. Leave blank to use the " + TokenEnvironmentVar + " environment variable instead.\r\n"
-                 + "BotToken=\r\n"
-                 + "# AuthorizedChatID: your numeric Telegram user ID. Alerts go here; only this user can send commands.\r\n"
-                 + "AuthorizedChatID=\r\n"
+                 + "BotToken=                           # from @BotFather; blank = use the NT_TELEGRAM_BOT_TOKEN environment variable\r\n"
+                 + "AuthorizedChatID=                   # your numeric Telegram user ID (ask @userinfobot); only you can send commands\r\n"
+                 + "FlattenConfirm=false                # true = /flatten and /lock ask you to confirm first\r\n"
                  + "\r\n"
                  + "# --- Accounts ---\r\n"
-                 + "# AccountName: one account, a comma-separated list, or * for all connected accounts.\r\n"
-                 + "AccountName=Sim101\r\n"
-                 + "\r\n"
-                 + "# --- Features ---\r\n"
-                 + "EnableWatchdog=true\r\n"
-                 + "EnableExecutions=true\r\n"
-                 + "EnableRemoteCommands=true\r\n"
-                 + "EnableOrderRejectAlerts=true\r\n"
-                 + "# RunawayMaxOrders: alert when this many new orders appear within RunawayWindowSec. 0 = off.\r\n"
-                 + "RunawayMaxOrders=30\r\n"
-                 + "RunawayWindowSec=60\r\n"
-                 + "# true = /flatten calls FlattenEverything() and hits EVERY connected account.\r\n"
-                 + "UseGlobalFlattenEverything=false\r\n"
+                 + "AccountName=Sim101                  # accounts to watch: one, a comma-separated list, or * for all\r\n"
+                 + "LeaderAccount=                      # copier users only: the account your copier copies from; blank = no copier\r\n"
                  + "\r\n"
                  + "# --- End of day ---\r\n"
-                 + "# EodReportTime: HHMMSS in EodTimeZoneId (a Windows time zone id; DST is handled automatically).\r\n"
-                 + "EodReportTime=170000\r\n"
-                 + "EodTimeZoneId=Eastern Standard Time\r\n"
-                 + "# Used only when NinjaTrader reports zero commission for a fill (e.g. Sim without a commission template).\r\n"
-                 + "EstimatedCommissionPerSide=0\r\n"
+                 + "EodReportTime=170000                # when your trading day ends (HHMMSS): daily report and new session\r\n"
+                 + "EodTimeZoneId=Eastern Standard Time # Windows time zone for EodReportTime\r\n"
                  + "\r\n"
-                 + "# --- Heartbeat and restart detection ---\r\n"
-                 + "# HeartbeatUrl: optional dead-man's-switch ping URL (e.g. from Healthchecks.io). Blank = off.\r\n"
-                 + "HeartbeatUrl=\r\n"
-                 + "HeartbeatIntervalSec=60\r\n"
-                 + "# RestartGapThresholdSec: on startup, report downtime longer than this many seconds.\r\n"
-                 + "RestartGapThresholdSec=45\r\n"
+                 + "# --- Backup alerts (optional; treat both URLs like passwords) ---\r\n"
+                 + "HeartbeatUrl=                       # dead-man's switch ping, e.g. Healthchecks.io: tells you when alerts stop\r\n"
+                 + "BackupAlertUrl=                     # second channel for critical alerts, e.g. https://ntfy.sh/your-long-random-topic\r\n"
                  + "\r\n"
-                 + "# --- Monitoring ---\r\n"
-                 + "EnableStrategyWatch=true\r\n"
-                 + "# StaleDataSeconds: alert when an instrument you trade gets no ticks this long while the data connection says Connected. 0 = off.\r\n"
-                 + "StaleDataSeconds=120\r\n"
-                 + "# StaleDataSchedule: when no ticks are expected, so silence is not an alarm.\r\n"
-                 + "#   cme    = CME-style futures week: daily 17:00-18:00 and Fri 17:00 to Sun 18:00, US Eastern\r\n"
-                 + "#   always = the feed should tick around the clock (crypto, or to switch the schedule off)\r\n"
-                 + "#   custom = your own quiet windows below, in StaleDataTimeZone\r\n"
-                 + "StaleDataSchedule=cme\r\n"
-                 + "# StaleDataQuietWindows: used with custom. Semicolon-separated 'Days HH:mm-HH:mm'; days are Mon..Sun, ranges (Mon-Thu), Daily, Weekdays or Weekends.\r\n"
-                 + "# A window cannot cross midnight: split it. Example (US stocks, Eastern): Weekdays 00:00-09:30; Weekdays 16:00-24:00; Weekends 00:00-24:00\r\n"
-                 + "StaleDataQuietWindows=\r\n"
-                 + "# StaleDataTimeZone: Windows time zone id for custom windows, e.g. Eastern Standard Time, Central Europe Standard Time, GMT Standard Time.\r\n"
-                 + "StaleDataTimeZone=Eastern Standard Time\r\n"
-                 + "# StaleDataInstruments: extra instruments to always watch, comma-separated (e.g. MNQ 12-26). Instruments you trade or hold are watched automatically.\r\n"
-                 + "StaleDataInstruments=\r\n"
-                 + "# EnableAlertLog: also append every alert to DirectTelegramNotifier.log in this folder.\r\n"
-                 + "EnableAlertLog=true\r\n"
+                 + "# --- Drawdown floor ---\r\n"
+                 + "DrawdownMode=manual                 # off, manual, static, eod (end-of-day trailing) or intraday (intraday trailing)\r\n"
+                 + "RiskFloor=                          # manual: the floor in net liquidation dollars; blank = set it later with /floor\r\n"
+                 + "StartingBalance=                    # static, eod, intraday: account size\r\n"
+                 + "DrawdownAmount=                     # static, eod, intraday: maximum drawdown in dollars\r\n"
+                 + "FloorLock=                          # a trailing floor stops rising here; blank = never\r\n"
+                 + "RiskBufferAlerts=1500,750,300       # alert when net liquidation gets this close to the floor (dollars)\r\n"
+                 + "# Any risk setting can differ per account, e.g. DrawdownAmount:Acct002=2500\r\n"
                  + "\r\n"
-                 + "# --- Trade copier check (e.g. Replikanto) ---\r\n"
-                 + "# LeaderAccount: the account that leads. Blank = the first account in AccountName. Every other tracked account is a follower.\r\n"
-                 + "LeaderAccount=\r\n"
-                 + "# FollowerRatio: expected follower position as a multiple of the leader's (1 = same size).\r\n"
-                 + "FollowerRatio=1\r\n"
-                 + "# MismatchSeconds: alert when followers stay out of sync with the leader this long. 0 = off.\r\n"
-                 + "MismatchSeconds=20\r\n"
+                 + "# --- Daily loss and prop-firm rules (blank = off) ---\r\n"
+                 + "DailyLossLimit=                     # dollars (1000) or % of the day's starting value (2%)\r\n"
+                 + "ConsistencyPercent=                 # best-day limit as % of total profit, e.g. 30; needs StartingBalance\r\n"
+                 + "InactivityDays=                     # days your firm allows without a trade\r\n"
                  + "\r\n"
-                 + "# --- Safety checks ---\r\n"
-                 + "# ProtectiveCheckSeconds: alert when an open position has no working stop order for this long. 0 = off.\r\n"
-                 + "# Turn it on only if your strategies place real stop orders (not internal stop logic).\r\n"
-                 + "ProtectiveCheckSeconds=0\r\n"
-                 + "# OrphanOrderSeconds: alert when an account is flat but exit-type orders (name contains one of OrphanOrderNames) keep working this long. 0 = off.\r\n"
-                 + "OrphanOrderSeconds=20\r\n"
-                 + "OrphanOrderNames=Stop,Target\r\n"
-                 + "# StuckOrderSeconds: alert when an order sits in one of StuckOrderStates this long. 0 = off.\r\n"
-                 + "StuckOrderSeconds=30\r\n"
-                 + "# StuckOrderStates: NinjaTrader order states that should pass quickly. Add Accepted only if your broker moves orders past it quickly.\r\n"
-                 + "StuckOrderStates=Submitted,ChangePending,ChangeSubmitted,CancelPending,CancelSubmitted\r\n"
-                 + "# MaxPositionContracts: alert when an account holds more than this many contracts in total. 0 = off.\r\n"
-                 + "MaxPositionContracts=0\r\n"
+                 + "# --- Automatic flatten (off by default) ---\r\n"
+                 + "# On a breach the account is flattened and kept flat until /unlock or the session ends.\r\n"
+                 + "# Strategies and copiers are NOT stopped. Test on Sim first, then check that /selftest says ARMED.\r\n"
+                 + "RiskAutoFlatten=false               # when the drawdown floor is reached\r\n"
+                 + "DailyLossAutoFlatten=false          # when the daily loss limit is reached\r\n"
+                 + "ConsistencyAutoFlatten=false        # when today's profit reaches the consistency cap\r\n"
                  + "\r\n"
-                 + "# --- Risk: drawdown floor and daily loss limit ---\r\n"
-                 + "# Enter YOUR rules: these are not firm presets. Check /risk against your broker's or firm's own dashboard.\r\n"
-                 + "# Any line marked (per account) can also be set for one account:  Key:AccountName=value  e.g.  DrawdownAmount:Acct002=2500\r\n"
-                 + "#\r\n"
-                 + "# DrawdownMode (per account): how the floor is found.\r\n"
-                 + "#   off      = no floor checks\r\n"
-                 + "#   manual   = the floor is RiskFloor below, or whatever you set with /floor\r\n"
-                 + "#   static   = StartingBalance - DrawdownAmount; it never moves\r\n"
-                 + "#   eod      = trails the highest end-of-day balance (at EodReportTime): floor = high - DrawdownAmount, capped at FloorLock\r\n"
-                 + "#   intraday = trails the highest live net liquidation, including open profit, capped at FloorLock\r\n"
-                 + "# A /floor setting always overrides the mode until /floor clear.\r\n"
-                 + "DrawdownMode=manual\r\n"
-                 + "# HighWaterBasis (per account): what a trailing high-water mark is measured on.\r\n"
-                 + "#   balance = closing balance without open profit or loss (net liquidation minus open P&L). Right for end-of-day trailing.\r\n"
-                 + "#   netliq  = net liquidation including open profit. Intraday trailing always uses net liquidation.\r\n"
-                 + "# Firms differ: check which one yours uses. Compare /risk with your firm's dashboard after the first session.\r\n"
-                 + "HighWaterBasis=balance\r\n"
-                 + "# RiskFloor (per account): the floor for manual mode, in net liquidation dollars. Blank = none.\r\n"
-                 + "RiskFloor=\r\n"
-                 + "# StartingBalance (per account): account size. Needed for static; trailing modes start from it (else from current net liquidation).\r\n"
-                 + "StartingBalance=\r\n"
-                 + "# DrawdownAmount (per account): the maximum drawdown in dollars, for static, eod and intraday.\r\n"
-                 + "DrawdownAmount=\r\n"
-                 + "# FloorLock (per account): a trailing floor stops rising at this value (often starting balance + a little). Blank = never locks.\r\n"
-                 + "FloorLock=\r\n"
-                 + "# RiskBufferAlerts: alert as net liquidation comes within these many dollars of the floor.\r\n"
-                 + "RiskBufferAlerts=1500,750,300\r\n"
-                 + "# RiskAutoFlatten: true = an account that stays within RiskFlattenBuffer of its floor for RiskConfirmSeconds is flattened and LOCKED:\r\n"
-                 + "# anything that opens on it afterwards is closed again until /unlock or the session ends. Test on Sim first.\r\n"
-                 + "RiskAutoFlatten=false\r\n"
-                 + "RiskFlattenBuffer=150\r\n"
-                 + "# RiskConfirmSeconds: how long a breach must last before auto-flatten acts (filters a single bad reading). 1-30.\r\n"
-                 + "RiskConfirmSeconds=2\r\n"
-                 + "# FloorJumpConfirm: /floor asks for a button press when it moves a floor by more than this, or puts it inside your alert levels. 0 = only the latter.\r\n"
-                 + "FloorJumpConfirm=1000\r\n"
-                 + "#\r\n"
-                 + "# UnknownFlattenSeconds: while you hold a position and the risk numbers can't be trusted (data connection down, feed stale,\r\n"
-                 + "# net liquidation unreadable), flatten and lock the account after this many seconds. 0 = never: only alert (every minute).\r\n"
-                 + "# Orders do not need market data, so a flatten still works. A short data blip would cost you the position, so think before using it.\r\n"
-                 + "UnknownFlattenSeconds=0\r\n"
-                 + "# LockGroup: true = when one tracked account is locked, lock them all. Stops a copier from re-opening trades on a locked follower\r\n"
-                 + "# (each re-entry is closed at a small loss), but one account's breach then halts every account.\r\n"
-                 + "LockGroup=false\r\n"
-                 + "#\r\n"
-                 + "# DailyLossLimit (per account): maximum loss per session, measured from net liquidation at the session start (EodReportTime).\r\n"
-                 + "# Dollars (1000) or percent of the session-start value (2%). Blank = off.\r\n"
-                 + "DailyLossLimit=\r\n"
-                 + "# DailyLossAlerts: percentages of the limit that alert.\r\n"
-                 + "DailyLossAlerts=50,75,90\r\n"
-                 + "# DailyLossAutoFlatten: true = flatten and lock an account that reaches its daily loss limit.\r\n"
-                 + "DailyLossAutoFlatten=false\r\n"
-                 + "#\r\n"
-                 + "# --- Consistency rule (best day as a share of total profit) ---\r\n"
-                 + "# ConsistencyPercent (per account): your firm's limit, e.g. 30, 40 or 50. Blank or 0 = off. Needs StartingBalance.\r\n"
-                 + "# Firms differ (and change their rules): enter the percentage from YOUR account's rules.\r\n"
-                 + "# The notifier shows how much today's profit can reach before today is more than this share of your total profit.\r\n"
-                 + "ConsistencyPercent=\r\n"
-                 + "# ConsistencyProfitTarget (per account): LEAVE BLANK unless your firm measures against the larger of total profit and the profit target.\r\n"
-                 + "# Setting it raises the allowed daily profit to at least percent x target, which overstates your room if your firm does not do that.\r\n"
-                 + "ConsistencyProfitTarget=\r\n"
-                 + "# ConsistencyAlerts: percentages of today's allowed profit that alert.\r\n"
-                 + "ConsistencyAlerts=75,90\r\n"
-                 + "# ConsistencyAutoFlatten: true = flatten and lock the account when today's profit reaches the cap (stops the day from getting too big).\r\n"
-                 + "ConsistencyAutoFlatten=false\r\n"
                  + "\r\n"
-                 + "# --- Inactivity rule ---\r\n"
-                 + "# InactivityDays (per account): your firm closes an account that has not traded for this many days. Blank or 0 = off.\r\n"
-                 + "# Any fill counts as a trade. Check which accounts your firm applies this to (some only to funded accounts).\r\n"
-                 + "# The notifier warns you; it never places a trade. Tell your firm in advance about planned breaks.\r\n"
-                 + "# Example for one account only:  InactivityDays:Acct001=7\r\n"
-                 + "InactivityDays=\r\n"
-                 + "# InactivityAlerts: alert when this many days (or fewer) are left. Time is counted in 24-hour days from your last fill; a firm counting\r\n"
-                 + "# calendar days can end sooner, so treat the last alert day as your deadline and trade before it.\r\n"
-                 + "InactivityAlerts=3,2,1\r\n"
+                 + "# ======================================================================\r\n"
+                 + "# ADVANCED SETTINGS, at their defaults. Change one only if you need to.\r\n"
+                 + "# ======================================================================\r\n"
                  + "\r\n"
-                 + "# --- Second alert channel (optional) ---\r\n"
-                 + "# Everything above depends on Telegram. BackupAlertUrl sends only the CRITICAL alerts a second way: the first Risk UNKNOWN,\r\n"
-                 + "# the tightest floor level or below it, the daily loss limit, an account lock or a lock being enforced, an account that is still\r\n"
-                 + "# exposed after an automatic flatten, and 'Telegram alerts are not getting through'. Blank = off.\r\n"
-                 + "# The notifier POSTs a SHORT plain-text message to this URL (which kind of trouble, and the last 3 characters of the account name: no amounts). ntfy.sh works as is (pick a long random topic and subscribe in its phone app):\r\n"
-                 + "#   BackupAlertUrl=https://ntfy.sh/your-long-random-topic\r\n"
-                 + "# Treat the URL like a password. Check it with /testbackup.\r\n"
-                 + "BackupAlertUrl=\r\n"
-                 + "# BackupAlertFormat: text = the alert as the request body (ntfy and most push services). json = {\"text\":...,\"content\":...,\"message\":...}\r\n"
-                 + "# (Slack and Discord incoming webhooks, and similar).\r\n"
-                 + "BackupAlertFormat=text\r\n"
-                 + "# BackupAlertDetail: minimal = the short message above (the default: the URL is a third party, often a public service).\r\n"
-                 + "# full = the whole alert as Telegram shows it, with account names and dollar amounts: only for a service you run yourself.\r\n"
-                 + "BackupAlertDetail=minimal\r\n"
+                 + "# --- Alerts on or off ---\r\n"
+                 + "EnableWatchdog=true                 # connection, NinjaTrader freezing, start/stop and restart alerts\r\n"
+                 + "EnableExecutions=true               # fill alerts\r\n"
+                 + "EnableRemoteCommands=true           # accept commands from Telegram\r\n"
+                 + "EnableOrderRejectAlerts=true        # rejected-order alerts\r\n"
+                 + "EnableStrategyWatch=true            # strategy enabled / disabled / removed alerts\r\n"
+                 + "SilentRoutineAlerts=false           # true = routine messages arrive without a sound; problems still ring\r\n"
+                 + "FillGroupMs=2000                    # fills within this many ms become one message (500-10000)\r\n"
                  + "\r\n"
-                 + "# --- Risk log (for replaying a real session) ---\r\n"
-                 + "# EnableRiskLog: true = write every reading the risk check sees to DirectTelegramNotifier-risk.csv (about 7 MB a day per account while the\r\n"
-                 + "# market moves; capped at 50 MB, then it rolls to .old). A session recorded here can be replayed through the risk logic: see docs/TESTING.md.\r\n"
-                 + "EnableRiskLog=true\r\n"
+                 + "# --- Orders and positions (0 = off) ---\r\n"
+                 + "RunawayMaxOrders=30                 # alert when this many new orders appear...\r\n"
+                 + "RunawayWindowSec=60                 # ...within this many seconds\r\n"
+                 + "ProtectiveCheckSeconds=0            # position with no working stop this long (only if your strategy places real stops)\r\n"
+                 + "OrphanOrderSeconds=20               # flat account with exit orders still working this long\r\n"
+                 + "OrphanOrderNames=Stop,Target        # order names that count as exit orders\r\n"
+                 + "StuckOrderSeconds=30                # order stuck in one of the states below this long\r\n"
+                 + "StuckOrderStates=Submitted,ChangePending,ChangeSubmitted,CancelPending,CancelSubmitted  # states that should pass quickly\r\n"
+                 + "MaxPositionContracts=0              # alert above this many contracts per account\r\n"
                  + "\r\n"
-                 + "# --- Machine health (the NinjaTrader process) ---\r\n"
-                 + "# CpuAlertPercent / CpuAlertSeconds: alert when NinjaTrader's CPU stays at or above this level this long. 0 = off.\r\n"
-                 + "CpuAlertPercent=90\r\n"
-                 + "CpuAlertSeconds=180\r\n"
-                 + "# MemoryAlertMB: alert when NinjaTrader uses more memory than this. 0 = off.\r\n"
-                 + "MemoryAlertMB=0\r\n"
-                 + "# DiskAlertMB: alert when the drive holding the config folder has less free space than this. 0 = off.\r\n"
-                 + "DiskAlertMB=2000\r\n"
+                 + "# --- Trade copier (only with LeaderAccount) ---\r\n"
+                 + "FollowerRatio=1                     # follower size as a multiple of the leader's\r\n"
+                 + "MismatchSeconds=20                  # alert when a follower stays out of step this long (0 = off)\r\n"
                  + "\r\n"
-                 + "# --- Convenience ---\r\n"
-                 + "# FlattenConfirm: true = /flatten and /lock first show Confirm / Cancel buttons (expire after 30 s). false = act immediately.\r\n"
-                 + "FlattenConfirm=false\r\n"
-                 + "# FlattenHoldSeconds: after /flatten, anything that opens on those accounts in this many seconds is closed again\r\n"
-                 + "# (catches a copier or strategy putting the position back, or flipping a follower). 0 = off.\r\n"
-                 + "FlattenHoldSeconds=30\r\n"
-                 + "# FillGroupMs: fills of the same instrument and side within this many milliseconds become one message (500-10000).\r\n"
-                 + "FillGroupMs=2000\r\n"
-                 + "# SilentRoutineAlerts: true = fills, reconnects, in-sync notices, reports and command replies arrive without a notification sound; problems still ring.\r\n"
-                 + "SilentRoutineAlerts=false\r\n"
-                 + "# EnableFillCsv: write every fill (and leader vs follower comparison) to DirectTelegramNotifier-fills.csv in this folder.\r\n"
-                 + "EnableFillCsv=true\r\n";
+                 + "# --- Stale market data ---\r\n"
+                 + "StaleDataSeconds=120                # alert when a connected feed sends no ticks this long (0 = off)\r\n"
+                 + "StaleDataSchedule=cme               # when quiet is normal: cme, always or custom\r\n"
+                 + "StaleDataQuietWindows=              # custom only, e.g. Weekdays 16:00-24:00; Weekends 00:00-24:00\r\n"
+                 + "StaleDataTimeZone=Eastern Standard Time  # time zone for StaleDataQuietWindows\r\n"
+                 + "StaleDataInstruments=               # extra instruments to watch, also for rolls; traded and held ones are automatic\r\n"
+                 + "\r\n"
+                 + "# --- Contract rolls ---\r\n"
+                 + "RollWarnDays=10                     # warn this many days before a futures contract in use expires (0 = off)\r\n"
+                 + "\r\n"
+                 + "# --- Risk details ---\r\n"
+                 + "HighWaterBasis=balance              # eod trailing measured on balance (no open P&L) or netliq\r\n"
+                 + "RiskFlattenBuffer=150               # auto-flatten this many dollars above the floor\r\n"
+                 + "RiskConfirmSeconds=2                # a breach must last this long before auto-flatten acts (1-30)\r\n"
+                 + "FloorJumpConfirm=1000               # /floor asks you to confirm a change bigger than this\r\n"
+                 + "UnknownFlattenSeconds=0             # flatten if risk data is missing this long while in a trade (0 = alert only)\r\n"
+                 + "LockGroup=false                     # true = locking one account locks them all\r\n"
+                 + "DailyLossAlerts=50,75,90            # % of DailyLossLimit that alert\r\n"
+                 + "ConsistencyAlerts=75,90             # % of today's allowed profit that alert\r\n"
+                 + "ConsistencyProfitTarget=            # leave blank unless your firm measures against the profit target\r\n"
+                 + "InactivityAlerts=3,2,1              # days left that alert\r\n"
+                 + "\r\n"
+                 + "# --- /flatten ---\r\n"
+                 + "FlattenHoldSeconds=30               # after /flatten, close anything that reopens this soon (0 = off)\r\n"
+                 + "UseGlobalFlattenEverything=false    # true = /flatten closes every connected account, not just these\r\n"
+                 + "\r\n"
+                 + "# --- Backup channel and heartbeat ---\r\n"
+                 + "BackupAlertDetail=minimal           # minimal (no amounts) or full (only for a service you run yourself)\r\n"
+                 + "BackupAlertFormat=text              # text, or json for Slack and Discord webhooks\r\n"
+                 + "HeartbeatIntervalSec=60             # how often to ping HeartbeatUrl\r\n"
+                 + "RestartGapThresholdSec=45           # report downtime longer than this at startup\r\n"
+                 + "\r\n"
+                 + "# --- NinjaTrader health (0 = off) ---\r\n"
+                 + "CpuAlertPercent=90                  # alert when NinjaTrader's CPU stays this high...\r\n"
+                 + "CpuAlertSeconds=180                 # ...for this many seconds\r\n"
+                 + "MemoryAlertMB=0                     # alert when NinjaTrader uses more memory than this\r\n"
+                 + "DiskAlertMB=2000                    # alert when free disk space falls below this\r\n"
+                 + "\r\n"
+                 + "# --- Logs and reports ---\r\n"
+                 + "EnableAlertLog=true                 # copy every alert to DirectTelegramNotifier.log\r\n"
+                 + "EnableFillCsv=true                  # write every fill to DirectTelegramNotifier-fills.csv\r\n"
+                 + "EnableRiskLog=true                  # record risk readings for replay (up to 50 MB)\r\n"
+                 + "EstimatedCommissionPerSide=0        # commission per contract per side, used when NinjaTrader reports none\r\n";
         }
+
+        // Values that were present but could not be read. They are reported in Telegram at startup with the other warnings.
+        private List<string> parseWarnings = new List<string>();
 
         private bool LoadConfiguration()
         {
             string path = ConfigPath();
             Dictionary<string, string> kv = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            parseWarnings = new List<string>();
 
             try
             {
@@ -263,7 +187,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     int eq = line.IndexOf('=');
                     if (eq <= 0)
                         continue;
-                    kv[line.Substring(0, eq).Trim()] = line.Substring(eq + 1).Trim();
+                    kv[line.Substring(0, eq).Trim()] = Dtn.StripInlineComment(line.Substring(eq + 1));
                 }
             }
             catch (Exception ex)
@@ -302,7 +226,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             cfgOrphanOrderNames           = GetString(kv, "OrphanOrderNames", "Stop,Target");
             cfgStuckOrderSec              = Math.Max(0, GetInt(kv, "StuckOrderSeconds", 30));
             cfgMaxPositionContracts       = Math.Max(0, GetInt(kv, "MaxPositionContracts", 0));
-            cfgRiskFloor                  = ParseOptionalDouble(GetString(kv, "RiskFloor", string.Empty));
+            cfgRiskFloor                  = GetOptionalDouble(kv, "RiskFloor");
             riskBuffers                   = ParseDollarList(GetString(kv, "RiskBufferAlerts", "1500,750,300"));
             cfgRiskAutoFlatten            = GetBool(kv, "RiskAutoFlatten", false);
             cfgRiskFlattenBuffer          = Math.Max(0.0, GetDouble(kv, "RiskFlattenBuffer", 150.0));
@@ -311,12 +235,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             cfgMemoryAlertMb              = Math.Max(0, GetInt(kv, "MemoryAlertMB", 0));
             cfgDiskAlertMb                = Math.Max(0, GetInt(kv, "DiskAlertMB", 2000));
             cfgFillGroupMs                = Math.Max(500, Math.Min(10000, GetInt(kv, "FillGroupMs", 2000)));
+            cfgRollWarnDays               = Math.Max(0, Math.Min(90, GetInt(kv, "RollWarnDays", 10)));
             cfgStaleDataQuietWindows      = GetString(kv, "StaleDataQuietWindows", string.Empty);
             cfgStaleDataTimeZone          = GetString(kv, "StaleDataTimeZone", "Eastern Standard Time");
             cfgDrawdownMode               = GetString(kv, "DrawdownMode", "manual");
-            cfgStartingBalance            = ParseOptionalDouble(GetString(kv, "StartingBalance", string.Empty));
-            cfgDrawdownAmount             = ParseOptionalDouble(GetString(kv, "DrawdownAmount", string.Empty));
-            cfgFloorLock                  = ParseOptionalDouble(GetString(kv, "FloorLock", string.Empty));
+            cfgStartingBalance            = GetOptionalDouble(kv, "StartingBalance");
+            cfgDrawdownAmount             = GetOptionalDouble(kv, "DrawdownAmount");
+            cfgFloorLock                  = GetOptionalDouble(kv, "FloorLock");
             cfgDailyLossLimit             = GetString(kv, "DailyLossLimit", string.Empty);
             dailyLossAlerts               = ParseDollarList(GetString(kv, "DailyLossAlerts", "50,75,90"));
             cfgDailyLossAutoFlatten       = GetBool(kv, "DailyLossAutoFlatten", false);
@@ -326,15 +251,15 @@ namespace NinjaTrader.NinjaScript.AddOns
             cfgHighWaterBasis             = GetString(kv, "HighWaterBasis", "balance");
             cfgUnknownFlattenSec          = Math.Max(0, Math.Min(3600, GetInt(kv, "UnknownFlattenSeconds", 0)));
             cfgLockGroup                  = GetBool(kv, "LockGroup", false);
-            cfgConsistencyPercent         = ParseOptionalDouble(GetString(kv, "ConsistencyPercent", string.Empty));
-            cfgConsistencyTarget          = ParseOptionalDouble(GetString(kv, "ConsistencyProfitTarget", string.Empty));
+            cfgConsistencyPercent         = GetOptionalDouble(kv, "ConsistencyPercent");
+            cfgConsistencyTarget          = GetOptionalDouble(kv, "ConsistencyProfitTarget");
             consistencyAlerts             = ParseDollarList(GetString(kv, "ConsistencyAlerts", "75,90"));
             cfgConsistencyAutoFlatten     = GetBool(kv, "ConsistencyAutoFlatten", false);
             cfgEnableRiskLog              = GetBool(kv, "EnableRiskLog", true);
             cfgBackupUrl                  = GetString(kv, "BackupAlertUrl", string.Empty).Trim();
             cfgBackupFormat               = GetString(kv, "BackupAlertFormat", "text").Trim().ToLowerInvariant();
             cfgBackupDetail               = GetString(kv, "BackupAlertDetail", "minimal").Trim().ToLowerInvariant();
-            cfgInactivityDays             = ParseOptionalDouble(GetString(kv, "InactivityDays", string.Empty));
+            cfgInactivityDays             = GetOptionalDouble(kv, "InactivityDays");
             inactivityAlerts              = ParseDollarList(GetString(kv, "InactivityAlerts", "3,2,1"));
 
             List<string> warnings = new List<string>();
@@ -405,6 +330,41 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
             if (!double.IsNaN(cfgInactivityDays) && cfgInactivityDays < 0)
                 warnings.Add("InactivityDays must be 0 or more (0 = off)");
+            string leaderSetting = (cfgLeaderAccount ?? string.Empty).Trim();
+            string accountFilter = (cfgAccountName ?? string.Empty).Trim();
+            if (leaderSetting.Length > 0 && accountFilter != "*")
+            {
+                bool listed = false;
+                foreach (string part in accountFilter.Split(','))
+                {
+                    if (part.Trim().Equals(leaderSetting, StringComparison.OrdinalIgnoreCase))
+                        listed = true;
+                }
+                if (!listed)
+                    warnings.Add("LeaderAccount '" + leaderSetting + "' is not in AccountName, so the copy check cannot run");
+            }
+            if (!Dtn.IsValidAmountOrPercent(cfgDailyLossLimit))
+                warnings.Add("DailyLossLimit '" + cfgDailyLossLimit + "' is not an amount (1000) or a percentage (2%); there is no daily loss limit until you fix it");
+            lock (riskLock)
+            {
+                foreach (KeyValuePair<string, string> pair in accountSettings)
+                {
+                    int bar = pair.Key.IndexOf('|');
+                    string baseKey = pair.Key.Substring(0, bar);
+                    string label = CanonicalKey(baseKey) + ":" + pair.Key.Substring(bar + 1);
+                    if (baseKey == "dailylosslimit")
+                    {
+                        if (!Dtn.IsValidAmountOrPercent(pair.Value))
+                            warnings.Add(label + " '" + pair.Value + "' is not an amount (1000) or a percentage (2%); this account has no daily loss limit until you fix it");
+                    }
+                    else if (baseKey != "drawdownmode" && baseKey != "highwaterbasis"
+                             && pair.Value.Length > 0 && double.IsNaN(ParseOptionalDouble(pair.Value)))
+                    {
+                        warnings.Add(label + " '" + pair.Value + "' is not a number; it is treated as blank for this account");
+                    }
+                }
+            }
+            warnings.InsertRange(0, parseWarnings);
             configWarnings = warnings;
             foreach (string w in warnings)
                 WriteOutput("Config warning: " + w);
@@ -457,6 +417,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (v == "0" || v.Equals("no", StringComparison.OrdinalIgnoreCase) || v.Equals("off", StringComparison.OrdinalIgnoreCase))
                 return false;
             WriteOutput("Config: could not parse " + key + "='" + v + "'; using " + fallback + ".");
+            if (key.EndsWith("AutoFlatten", StringComparison.OrdinalIgnoreCase) && !fallback)
+                parseWarnings.Add(key + " '" + v + "' is not true or false, so automatic flatten for this rule is OFF");
+            else
+                parseWarnings.Add(key + " '" + v + "' is not true or false; using " + (fallback ? "true" : "false"));
             return fallback;
         }
 
@@ -469,6 +433,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out i))
                 return i;
             WriteOutput("Config: could not parse " + key + "='" + v + "'; using " + fallback.ToString(CultureInfo.InvariantCulture) + ".");
+            parseWarnings.Add(key + " '" + v + "' is not a number; using " + fallback.ToString(CultureInfo.InvariantCulture));
             return fallback;
         }
 
@@ -481,7 +446,32 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out d))
                 return d;
             WriteOutput("Config: could not parse " + key + "='" + v + "'; using " + fallback.ToString(CultureInfo.InvariantCulture) + ".");
+            parseWarnings.Add(key + " '" + v + "' is not a number; using " + fallback.ToString(CultureInfo.InvariantCulture));
             return fallback;
+        }
+
+        // Blank means "not set" (NaN). Anything else that is not a number is reported and also treated as not set.
+        private double GetOptionalDouble(Dictionary<string, string> kv, string key)
+        {
+            string v = GetString(kv, key, string.Empty);
+            double d = ParseOptionalDouble(v);
+            if (double.IsNaN(d) && !string.IsNullOrWhiteSpace(v))
+            {
+                WriteOutput("Config: could not parse " + key + "='" + v + "'; treating it as blank.");
+                parseWarnings.Add(key + " '" + v + "' is not a number; it is treated as blank (off)");
+            }
+            return d;
+        }
+
+        // "drawdownamount" -> "DrawdownAmount", for messages about per-account keys.
+        private static string CanonicalKey(string lower)
+        {
+            foreach (string k in Dtn.PerAccountKeys)
+            {
+                if (k.Equals(lower, StringComparison.OrdinalIgnoreCase))
+                    return k;
+            }
+            return lower;
         }
 
         #endregion

@@ -718,6 +718,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 sb.Append("\n").Append(copyLine);
 
             sb.Append("\n<b>Strategies</b>\n").Append(BuildStrategiesBlock());
+            sb.Append(BuildContractLines());
             sb.Append(BuildFeedLines());
 
             sb.Append("\nNotifier up ").Append(FormatDuration(DateTime.UtcNow - startedUtc));
@@ -900,6 +901,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                       .Append(" <code>").Append(Html(b.InstrumentName)).Append("</code>\n");
                 }
             }
+            string roll = BuildRollEodLine();
+            if (roll.Length > 0)
+                sb.Append("\n").Append(roll);
             return sb.ToString().TrimEnd('\n');
         }
 

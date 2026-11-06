@@ -1,0 +1,5 @@
+# Synthetic, written by hand to pin one rule: NinjaTrader was off over the session close and the balance changed,
+# so the closing balance is not guessed. Expect CLOSING UNCERTAIN and an unchanged high-water mark.
+S,2026-10-30T20:50:00.000,F1,mode=eod;basis=balance;drawdown=2000;lock=50100;start=50000;override=;manual=;cpct=;ctarget=;daily=;buffers=300|750|1500;dalerts=50|75|90;calerts=75|90;raf=0;fbuf=150;daf=0;caf=0;confirm=2;unkflat=0;remind=60;gap=10;tol=1
+R,2026-10-30T20:50:00.000,F1,2026-10-30,51000,51000,,
+R,2026-10-31T10:00:00.000,F1,2026-10-31,51400,51400,,

@@ -30,7 +30,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             "EodReportTime", "EodTimeZoneId", "EstimatedCommissionPerSide",
             "HeartbeatUrl", "HeartbeatIntervalSec", "RestartGapThresholdSec",
             "EnableStrategyWatch", "StaleDataSeconds", "StaleDataSchedule", "StaleDataQuietWindows", "StaleDataTimeZone",
-            "StaleDataInstruments", "EnableAlertLog",
+            "StaleDataInstruments", "RollWarnDays", "EnableAlertLog",
             "LeaderAccount", "FollowerRatio", "MismatchSeconds",
             "ProtectiveCheckSeconds", "OrphanOrderSeconds", "OrphanOrderNames", "StuckOrderSeconds", "StuckOrderStates",
             "MaxPositionContracts",
@@ -137,6 +137,62 @@ namespace NinjaTrader.NinjaScript.AddOns
         #endregion
 
         #region Numbers
+
+        // "0.95   # per contract" -> "0.95". A # starts a comment only at the start of the value or after a space or tab,
+        // so a URL fragment such as https://example.com/#x is kept.
+        public static string StripInlineComment(string value)
+        {
+            if (value == null)
+                return string.Empty;
+            for (int i = 0; i < value.Length; i++)
+            {
+                if (value[i] == '#' && (i == 0 || value[i - 1] == ' ' || value[i - 1] == '\t'))
+                    return value.Substring(0, i).Trim();
+            }
+            return value.Trim();
+        }
+
+        // Blank, a dollar amount ("1000", "$1,000") or a positive percentage ("2%").
+        public static bool IsValidAmountOrPercent(string text)
+        {
+            string t = (text ?? string.Empty).Trim();
+            if (t.Length == 0)
+                return true;
+            if (t.EndsWith("%", StringComparison.Ordinal))
+            {
+                double pct = ParseOptionalDouble(t.Substring(0, t.Length - 1));
+                return !double.IsNaN(pct) && pct > 0;
+            }
+            return !double.IsNaN(ParseOptionalDouble(t));
+        }
+
+        // How urgent a contract's expiry is: 0 = nothing to say, 1 = roll soon (inside the warning window),
+        // 2 = roll now (3 days or less), 3 = expires today or already expired. warnDays 0 switches it all off.
+        public static int RollLevel(int daysLeft, int warnDays)
+        {
+            if (warnDays <= 0)
+                return 0;
+            if (daysLeft <= 0)
+                return 3;
+            if (daysLeft <= Math.Min(3, warnDays))
+                return 2;
+            if (daysLeft <= warnDays)
+                return 1;
+            return 0;
+        }
+
+        public static string DaysLeftText(int daysLeft)
+        {
+            if (daysLeft > 1)
+                return "in " + daysLeft.ToString(CultureInfo.InvariantCulture) + " days";
+            if (daysLeft == 1)
+                return "tomorrow";
+            if (daysLeft == 0)
+                return "today";
+            if (daysLeft == -1)
+                return "yesterday";
+            return (-daysLeft).ToString(CultureInfo.InvariantCulture) + " days ago";
+        }
 
         public static double ParseOptionalDouble(string text)
         {
@@ -636,9 +692,9 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         #endregion
 
-        #region Readiness, risk log and replay
+        #region Self-test checks, risk log and replay
 
-        // "MFFUEVREOD729960001" -> "...001": enough to know which account, little to identify it to anyone else.
+        // "MFFUEVREOD000000001" -> "...001": enough to know which account, little to identify it to anyone else.
         public static string MaskAccount(string name)
         {
             string n = (name ?? string.Empty).Trim();

@@ -209,7 +209,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         EnqueueReply(ExecuteUnlockCommand(argument));
                     break;
                 case "/selftest":
-                    EnqueueReply(BuildSelfTestText(AssessReadiness()));
+                    EnqueueReply(BuildSelfTestText(RunSelfTest()));
                     break;
                 case "/testbackup":
                     RunInBackground(async () => EnqueueReply(await TestBackupAsync()), "Backup test");
@@ -235,7 +235,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     EnqueueReply(HandleLeaderCommand(argument));
                     break;
                 case "/version":
-                    EnqueueReply(EmInfo + " DirectTelegramNotifier v" + AddOnVersion);
+                    EnqueueReply(BuildVersionText());
                     break;
                 case "/diag":
                     EnqueueReply(BuildDiagReport());

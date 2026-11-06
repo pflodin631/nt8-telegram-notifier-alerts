@@ -1,116 +1,74 @@
 # Changelog
 
+## 0.6.0 (2026-11-05)
+
+Fixes, cleanup, and a few new alerts.
+
+**Upgrading:** delete the `AddOns\DirectTelegramNotifier` folder, then copy the new one in. `DirectTelegramNotifier.Assurance.cs` was split into `SelfTest.cs`, `RiskLog.cs` and `BackupChannel.cs`; copying over the old folder leaves it behind and NinjaTrader reports duplicate definitions. Config and state carry over.
+
+**If you use a trade copier, set `LeaderAccount`.** Before this version, with `LeaderAccount` blank the first account in `AccountName` was treated as the copier leader. That guess is gone: with no `LeaderAccount` every account is tracked on its own, there are no copy checks or `(leader)` labels, and `/status` says the copy check is off. A copier setup that relied on list order needs one line added, for example `LeaderAccount=MyLeaderAccount`. Startup now warns if `LeaderAccount` is not in `AccountName`.
+
+Fixed
+- **A connection that kept dropping sent an alert every 5 minutes, per channel, for as long as it lasted, and could end in silence.** During a real MFFU outage it sent CONNECTION FLAPPING about every 5 minutes for over an hour, because the drop count still included drops made while the alert was muted. A connection that dropped repeatedly and then stayed down was never reported. Now orders and data of one connection are tracked together. You get one CONNECTION UNSTABLE alert (formerly CONNECTION FLAPPING) and no single drops after it; CONNECTION DOWN if it stays down for 60 seconds, STILL UNSTABLE every 30 minutes, and one CONNECTION STABLE summary after 10 quiet minutes. A sub-second outage reads "Down for under 1s" instead of "Down for 0s". This logic had no tests before; it has them now.
+- **A broker disconnect was read as a total loss.** NinjaTrader reports 0.00 net liquidation for an account whose connection is gone. For an account holding no position, that was treated as a real reading: RISK BUFFER "BELOW the floor" and DAILY LOSS LIMIT REACHED alerts (49,915.40 down against a 600 limit), and `/status` showing an 8,319% loss. This happened on a real MFFU disconnect. With auto-flatten on, the same reading would have flattened and locked the accounts until `/unlock` or the end of the session. Now a flat account that reports no value is not checked: its connection is down, or net liquidation reads exactly 0.00, which also happens briefly after a reconnect. No alerts, no lock, no change to the day's starting value, and `/status` says "Risk not checked" with the last good value. It resumes by itself. A held position whose order connection is down raises RISK UNKNOWN, as a dropped data feed already did.
+- **A comment after a value was read as part of the value.** `DailyLossAutoFlatten=true  # on` loaded as false, and the worked example's `EstimatedCommissionPerSide=0.95 #...` loaded as 0, both without a warning. A `#` after a space or tab now starts a comment.
+- **Values that could not be read were reported only in the NinjaScript Output window.** They now appear in the startup CONFIG WARNING in Telegram. An unreadable auto-flatten switch says that auto-flatten is off. Unreadable amounts (`StartingBalance`, `DrawdownAmount`, `DailyLossLimit`, per-account overrides and the rest) are reported as well.
+- **`tests/run-replay.sh` failed on a fresh clone.** `.gitignore` excluded `*.csv`, so the replay inputs were never committed. They are in the repo now, and each one says it is synthetic.
+- **The network description was incomplete in two places.** The README's Security section and the source header did not mention `BackupAlertUrl`. Both do now.
+
+Added
+- **Contract roll warnings.** For every futures contract in use (a running strategy, a position or working order, today's fills, `StaleDataInstruments`) the notifier reads NinjaTrader's expiry date and sends ROLL SOON (`RollWarnDays`, default 10 days out), ROLL NOW (3 days or less) and CONTRACT EXPIRES TODAY, once each. `/status` has a Contracts block with each expiry and the days left, and the end-of-day report adds a line while one is inside the window. By date, not by volume.
+- **SOFTWARE CHANGED.** The notifier remembers the NinjaTrader and Replikanto versions it sees and, about 20 seconds after startup, tells you if either changed since the last start, or if Replikanto is no longer detected (it waits 90 seconds for Replikanto to load). NinjaTrader updates itself, so this is how you find out. It looks at the installed files only and checks nothing online. `/version` shows both versions.
+- A Replikanto section in the README and `docs/ninjatrader-settings.md`, with NinjaTrader's settings that matter here and how updates work.
+
+Changed
+- **Config files have one setting per line, with its explanation after it.** The file created on first run has the common settings at the top and the advanced ones, at their defaults, at the bottom. The worked MFFU example keeps its longer reasoning in numbered notes at the top. Existing config files are not touched.
+- Added `docs/replikanto.md`: the copier settings in use, and how Replikanto's Follower Guard fits with the copy check. The README's Replikanto section is corrected: it said the Follower Guard actions were off, and described the out-of-sync timer as able to fire during a slow partial fill, which the vendor's documentation says it does not.
+- **`LeaderAccount` is explicit.** See above. The fills CSV leaves `role`, `ticks_worse_than_leader` and `lag_ms_vs_leader` blank when no leader is set.
+- Files and tests renamed to say what they hold. The behavioural suites are named by feature instead of by version.
+- The README is about a third as long. Settings, risk rules, alert channels, limitations and troubleshooting moved to `docs/`.
+- Removed the two `-clean` config examples, which duplicated the commented ones. Tests check that `config/DirectTelegramNotifier.config.example` matches the file the add-on writes, that it lists every setting exactly once, and that every value in it is the default.
+- Example account numbers replaced with placeholders.
+- The Verified table moved to `docs/TESTING.md`. It separates rules seen with test values from rules followed over several real sessions; the latter are not yet verified.
+- Tests run on GitHub Actions with Mono: unit tests, six behavioural suites and three replay cases. `tests/run-tests.sh` added for running the unit tests without Windows.
+
 ## 0.5.1 (2026-10-27)
 
-Fixes from the review of 0.5.0. No new features beyond what the fixes need. **Fixes verified on Sim.**
-
-**Upgrading from 0.5.0:** copy the folder over. One new optional key, `BackupAlertDetail`.
-
-- **The backup channel no longer sends the full alert to a third party.** It carried account names, net liquidation and floors to a public service such as ntfy.sh, which the README's "no third-party servers" did not admit. By default it now sends a short message: the kind of trouble and the last three characters of the account name, no amounts, positions or reasons (`BELOW FLOOR: account ...001. Open NinjaTrader now.`). `BackupAlertDetail=full` restores the whole alert, for a service you run yourself. The README's opening claim, the second-channel section and SECURITY.md now say exactly what goes where.
-- **STILL EXPOSED repeats.** A single alert after 15 s was easy to miss. It now repeats every minute, on both channels, with the elapsed time, until the account is flat (a quiet FLAT CONFIRMED) or unlocked (a quiet note): up to 12 hours for a locked account, up to 10 minutes after a `/flatten`. It only watches; it sends nothing to the broker.
-- **Open P&L check.** The self-test cannot prove the open P&L read works (a flat account legitimately reads 0). New: if you hold a position, net liquidation keeps moving and open P&L stays exactly 0.00 for 30 s, you get **OPEN P&L LOOKS WRONG**, and `/selftest` says so and hints whenever it sees exactly 0.00 on a held position. A heuristic: a fee can set it off.
-
-Testing
-- 416 unit tests (was 382): masking, the minimal texts (no digits), the open-P&L watch and its boundaries. A separate 31-mutant sweep of the new functions found two real gaps, now pinned.
-- Behavioural suite 06 grows to 88 checks: nothing but the minimal text reaches the backup channel, repeats and their endings, the watch end to end, `BackupAlertDetail`. The timing-based tests were run repeatedly to check they are stable.
+- The backup channel sends a short message by default: the kind of trouble and the last three characters of the account name, with no amounts. `BackupAlertDetail=full` sends the whole alert, for a service you run yourself.
+- STILL EXPOSED repeats every minute, on both channels, until the account is flat or unlocked.
+- **OPEN P&L LOOKS WRONG:** a warning when open P&L reads exactly 0.00 on a held position while net liquidation moves.
 
 ## 0.5.0 (2026-10-27)
 
-A third external review, answered in three parts: make the safety code observable (self-test, flatten follow-up, risk log and replay), close a single point of failure (a second alert channel), and test harder (a mutation sweep). The version is 0.5.0 because there are new commands and config keys.
+**Upgrading from 0.4:** copy the folder over the old one. New keys: `BackupAlertUrl`, `BackupAlertFormat`, `EnableRiskLog`.
 
-**Upgrading from 0.4:** copy the `DirectTelegramNotifier` folder over the old one. A new file, `DirectTelegramNotifier.Assurance.cs`, is added. New keys (`BackupAlertUrl`, `BackupAlertFormat`, `EnableRiskLog`) have safe defaults: the backup channel is off, the risk log is on.
-
-Delivery
-- **Second alert channel (optional, off by default):** `BackupAlertUrl` POSTs the critical alerts to a push service (ntfy works as is; Slack and Discord webhooks with `BackupAlertFormat=json`). What is critical: the first Risk UNKNOWN, the tightest floor level and below, the daily limit, a lock and a lock being enforced, STILL EXPOSED, and **"Telegram alerts are not getting through"** (and when they are again). Deduplicated for a minute, retried once, URL redacted from the Output window and logs. `/testbackup` checks it.
-- A refused send is recognized more broadly: 401, 403, 404 and the permanent kinds of 400 (chat not found, bot blocked, deactivated user, no rights, not a member, chat upgraded), not three cases. Message-specific errors (too long, bad markup) still are not.
-
-Safety
-- **Flatten follow-up:** `/flatten` no longer judges after a fixed 2.5 s: it checks until the positions are gone (up to 15 s) and reports how long it took, or **STILL EXPOSED** with what to do. An automatic flatten or `/lock` now follows up too: **FLAT CONFIRMED** (quiet) or **STILL EXPOSED** (loud, and to the backup channel). Before, the highest-stakes path never reported its outcome. The follow-up only watches: a second flatten while the first is working could reverse the position (the lock still re-sends one when no close is working).
-- **Self-test:** `/selftest`, a report 20 s after startup, and a line in `/status`: can it read net liquidation and open P&L for each account, which data check is in use, what rules apply, and is auto-flatten **ARMED** or **NOT ARMED** (a trailing mode without `DrawdownAmount`, `RiskAutoFlatten` with no floor, unreadable net liquidation, and so on). Loud when auto-flatten is on and cannot act. It reports and does not gate: the risk check already does nothing without those inputs.
-- `/unlock` asks for a button press when `FlattenConfirm=true`, like `/lock`.
-- **Audit log:** every command, every button press (and expired or unknown ones) and every message from another Telegram user is written to `DirectTelegramNotifier.log`.
-
-Testing
-- **Risk log and replay:** with `EnableRiskLog` (default on) every reading the risk check sees is written to `DirectTelegramNotifier-risk.csv` (rules when they change, readings when they change and at least every 30 s; capped at 50 MB). `bash tests/run-replay.sh` feeds a log back through the same risk logic, with three starter cases (a weekend, an overnight restart, a data outage recorded by the add-on itself). A bug found on Sim becomes a permanent test: see `docs/TESTING.md`. A behavioural test checks that live and replay agree.
-- **382 unit tests** (was 277) and a **mutation sweep**: every comparison, boolean operator, sign and `Math.Max`/`Math.Min` in the risk functions mutated one at a time (273 mutants): 212 caught, 39 invalid, 22 survived. The survivors were classified by hand: 19 equivalent, 3 real gaps in the new critical-event routing, closed. Earlier rounds of the sweep found real gaps that are now pinned: `DrawdownAmount=0`, a limit of 0, exact-boundary timers (2.000 s, 10 minutes, 1.00 tolerance), "a locked account is not flattened again" for the daily and consistency rules, and "a trailing floor never moves down" when the rules change.
-- New behavioural suite `06-v05-delivery-and-readiness` (66 checks). All six suites and the replay cases run from the repo.
-- Replay output lines carry the date, so a weekend log is unambiguous.
+- Optional second alert channel for critical alerts (`BackupAlertUrl`, checked with `/testbackup`), including "Telegram alerts are not getting through".
+- After `/flatten`, an automatic flatten or `/lock`, the notifier checks until the account is flat and reports FLAT CONFIRMED or STILL EXPOSED.
+- `/selftest`, a self-test 20 s after startup, and a line in `/status`: can it read what it needs, and is auto-flatten armed.
+- `/unlock` asks for confirmation when `FlattenConfirm=true`. Every command and button press is written to the log.
+- Risk log (`DirectTelegramNotifier-risk.csv`) and replay (`tests/run-replay.sh`).
+- More Telegram errors are recognized as permanent (bot blocked, chat not found, deactivated user and similar).
 
 ## 0.4.0 (2026-10-27)
 
-Fixes from a second external review, plus two rule trackers. 
+**Upgrading from 0.3:** copy the folder over the old one. New keys use their defaults.
 
-**Upgrading from 0.3:** copy the `DirectTelegramNotifier` folder over the old one. A new file, `DirectTelegramNotifier.Rules.cs`, is added. Your config and state carry over; new keys use their defaults. (From 0.2 or earlier, delete `DirectTelegramNotifierAddOn.cs` first.)
-
-Delivery
-- **The external heartbeat no longer vouches for a dead alert path.** A refused send (bot blocked, chat not found, bad token) is now recorded; while it is newer than the last successful send, the ping is held even if polling and `getMe` still work. A silent test message is tried every 5 minutes, so the heartbeat resumes once Telegram accepts one. `/diag` shows it. The README now says to route the Healthchecks alert to email or SMS, not Telegram.
-
-Risk
-- **Risk UNKNOWN is scoped to the account's own data connection** (read from the account when NinjaTrader exposes it; otherwise the old "any data connection" check). Another connection dropping no longer pauses every account.
-- **UNKNOWN repeats every minute** with how long it has lasted, instead of alerting once and going quiet.
-- **`UnknownFlattenSeconds`** (default off): flatten and lock an account whose risk data has been unavailable that long while holding a position. Flatten orders do not need market data.
-- **End-of-day high-water mark now uses the closing balance** (net liquidation minus open profit) by default (`HighWaterBasis=balance|netliq`, per account). Open profit at the close no longer lifts the floor above the firm's.
-- **An unwatched session boundary is not guessed.** If NinjaTrader did not see the close and the balance changed since, you get **CLOSING BALANCE UNCERTAIN** and the high-water mark and best day are left alone. If the balance is unchanged (an overnight restart), the last reading is used.
-- **`/risk seed ACCOUNT value`** sets the real high-water mark for an account that already has profit (and `/risk seed ACCOUNT bestday value`). It shows the resulting floor and asks for a button press, as does `/risk reset`. When a mark starts at `StartingBalance` on an account above it, you are told the floor may be too low.
-- **Several confirmation buttons can be pending at once.** A `/floor` prompt no longer cancels a `/flatten` prompt.
-- **`LockGroup`** (default off): when one account is locked, lock them all, so a copier stops re-opening trades on a locked follower.
-
-New rule trackers (both off until you set them)
-- **Consistency rule** (`ConsistencyPercent`, `ConsistencyProfitTarget`, `ConsistencyAlerts`, `ConsistencyAutoFlatten`): how much more profit today can add before today exceeds the percentage of total profit; best-day share in `/risk`. The percentage is yours to enter: sources disagree about firms' values.
-- **Inactivity clock** (`InactivityDays`, `InactivityAlerts`, per account): warns as the days without a trade run out, tells you when a trade resets it, and `/activity` shows last trades and corrects them. Trade times are saved across restarts. The notifier never places trades.
-
-Smaller
-- New config keys are validated and misspellings suggested. `/simulate` gains 8 samples (47 in total).
-- `/help` and the header list the new commands.
-
-Review follow-ups (also in 0.4.0)
-- **The risk state machine moved into `Core.cs`** as plain inputs and outputs (`EvaluateRisk`), so the riskiest code is unit-tested: weekend rollover (best day not inflated, floor unchanged), overnight restart with and without account changes, data outage while holding a position (alert, minute reminders, flatten timing, frozen readings ignored), floor levels and auto-flatten timing, daily loss, consistency, session-lock release. The add-on's own copy was removed; both code paths now use this one. Mutation-checked: six deliberate breakages are each caught.
-- **The behavioural tests are in the repo** (`tests/behavioral`, with the stand-in NinjaTrader API) and run with `bash tests/run-behavioral.sh`; before, the README cited tests nobody else could run.
-- The Output window and `/diag` now say which data check each account uses: its own connection, or any connection.
-- `/risk` shows the open P&L the closing balance is derived from, so a connection that reports it as 0 is visible.
-- `/risk` shows how much more total profit cures a best day that is already over the consistency limit.
-- `InactivityAlerts` defaults to `3,2,1` (a calendar-day count can end sooner than 24-hour days); README and the config template say to treat the last alert day as the deadline. `ConsistencyProfitTarget` is documented as "leave blank unless your firm measures against the target".
-
-Testing
-- 277 core unit tests (was 153 in 0.3.0): balance basis, consistency cap and cure, inactivity days, new keys, and the risk state machine.
-- 86 behavioural checks in the new `05-v04-rules` suite, plus the four earlier suites, all in the repo.
+- The external heartbeat is held while Telegram refuses the notifier's messages, and a silent test message is tried every 5 minutes.
+- Risk UNKNOWN is scoped to the account's own data connection, repeats every minute, and can flatten after `UnknownFlattenSeconds`.
+- The end-of-day high-water mark uses the closing balance by default (`HighWaterBasis`). A close NinjaTrader did not see is reported as CLOSING BALANCE UNCERTAIN instead of guessed. `/risk seed` sets the mark for an account that already has profit.
+- Several confirmation prompts can be pending at once. `LockGroup` locks every tracked account when one is locked.
+- Consistency-rule and inactivity trackers (`ConsistencyPercent`, `InactivityDays` and related keys).
+- The risk logic moved into `Core.cs` so it can be unit-tested; the behavioural tests are in the repo.
 
 ## 0.3.0 (2026-10-27)
 
-Risk enforcement, delivery guarantees, configurable drawdown models, and real unit tests. Based partly on an external code review.
+**Upgrading from 0.2:** delete `AddOns\DirectTelegramNotifierAddOn.cs` before copying the new `DirectTelegramNotifier` folder into `AddOns`.
 
-**Upgrading from 0.2:** the add-on is now a folder of files. **Delete `AddOns\DirectTelegramNotifierAddOn.cs`** before copying the new `DirectTelegramNotifier` folder into `AddOns`, or NinjaTrader will report the class as defined twice. Your config, floors and logs carry over; new keys use their defaults.
-
-Risk
-- **Account lock.** Auto-flatten now *latches*: the account stays locked, and anything that opens on it is flattened again at once (from the execution event, with a 1 s fallback) until `/unlock` or the session ends. Before, a copier or strategy could re-enter and trade through the floor during a 10-minute cooldown. Locks survive a restart within the same session.
-- `/lock [account]` and `/unlock [account]`: keep an account flat on demand.
-- **Hold after `/flatten`** (`FlattenHoldSeconds=30`): a copier or strategy re-entry, or a follower flipped by the copier copying the leader's close, is closed again.
-- **Drawdown modes** (`DrawdownMode=off|manual|static|eod|intraday`, with `StartingBalance`, `DrawdownAmount`, `FloorLock`): enter your rule once instead of a number every day. High-water marks are saved across restarts. `/floor` still overrides.
-- **Daily loss limit** (`DailyLossLimit`, dollars or percent; `DailyLossAlerts`; optional `DailyLossAutoFlatten`).
-- **Risk UNKNOWN:** holding a position while data is disconnected or stale (net liquidation frozen) alerts once and pauses automatic action for that account.
-- Faster: risk is checked every second (was 5 s), and confirmation is time-based (`RiskConfirmSeconds=2`) instead of two readings.
-- **Floor validation:** a `/floor` above net liquidation, inside your alert levels, or moving more than `FloorJumpConfirm` needs a button press.
-- Per-account overrides for `DrawdownMode`, `RiskFloor`, `StartingBalance`, `DrawdownAmount`, `FloorLock`, `DailyLossLimit` (`Key:Account=value`).
-- `/risk` report; `/risk reset [account]` restarts a trailing floor.
-
-Delivery
-- **Priority lane:** problem alerts and command replies are sent before routine messages; four or more waiting routine messages are merged into one. A Telegram rate limit pauses all sending; a new priority alert is tried immediately during a network backoff.
-- **Heartbeat vouches for delivery:** the external ping is held while Telegram is unreachable, the token is rejected, or alerts are stuck in the queue, so your dead-man's switch fires. Uses `getMe` when there is no other traffic.
-- TCP keepalive on the Telegram connection; shorter long-poll timeout.
-
-Smaller
-- **Unrecognized config keys are reported** (with "did you mean" suggestions), as are invalid modes, quiet windows and order states.
-- `/leader [account|clear]`, saved across restarts.
-- `/flatten` and `/cancel` no longer hold up other commands during their verification wait.
-- Custom stale-data schedules (`StaleDataSchedule=custom`, `StaleDataQuietWindows`, `StaleDataTimeZone`) for non-CME markets.
-- `StuckOrderStates` and `FillGroupMs` are configurable.
-- The re-entry alert points to `/lock`.
-
-Structure and testing
-- Split into partial-class files plus `DirectTelegramNotifier.Core.cs`, which holds the pure logic with no NinjaTrader types.
-- `tests/CoreTests.cs`: 153 unit tests, run with `tests\run-tests.ps1` using the compiler built into Windows. See `docs/TESTING.md`.
-- The README's Verified table now separates unit-tested, seen on Sim and seen live.
-
+- Account lock: after an auto-flatten, anything that opens on the account is closed again until `/unlock` or the session ends. `/lock` and `/unlock`. A hold after `/flatten` closes copier or strategy re-entries.
+- Drawdown modes (`static`, `eod`, `intraday`), a daily loss limit, Risk UNKNOWN, `/floor` validation, per-account overrides and `/risk`.
+- Problem alerts and command replies are sent before routine messages, and a backlog of routine messages is merged into one.
+- Unrecognized config keys are reported. `/leader`, custom stale-data schedules, configurable stuck-order states and fill grouping.
+- Split into several files, with the first unit tests.
 
 ## 0.2.0 (2026-10-26)
 

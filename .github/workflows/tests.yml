@@ -1,0 +1,19 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Mono
+        run: sudo apt-get update && sudo apt-get install -y mono-devel
+      - name: Unit tests
+        run: bash tests/run-tests.sh
+      - name: Behavioural tests (stand-in NinjaTrader API)
+        run: bash tests/run-behavioral.sh
+      - name: Replay tests
+        run: bash tests/run-replay.sh

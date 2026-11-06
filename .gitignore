@@ -26,3 +26,6 @@ DirectTelegramNotifier.state.tmp
 *.exe
 DirectTelegramNotifier-risk.csv
 DirectTelegramNotifier-risk.csv.old
+
+# ...except the replay test inputs, which must be committed or tests/run-replay.sh has nothing to replay.
+!tests/replay/cases/*/risk.csv

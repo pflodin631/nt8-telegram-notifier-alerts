@@ -267,7 +267,7 @@ class H7
         Check("so do the other new fields", Plain((string)Call("BuildRiskReport")).Length > 0 && System.IO.File.ReadAllText(Dir + "/DirectTelegramNotifier.state").Contains("act|LEAD="));
         Check("/status shows the days left", Plain((string)Call("BuildStatusReport")).Contains("Last trade"));
 
-        Console.WriteLine("\n--- 9b. review follow-ups: which data check is in use, open P&L, consistency cure");
+        Console.WriteLine("\n--- 9b. which data check is in use, open P&L, consistency cure");
         Func<string, bool> logged = needle => { lock (Get("recentLines")) return ((Queue<string>)Get("recentLines")).Any(x => x.Contains(needle)); };
         L.Connection = connOk; Call("RiskTick", DateTime.UtcNow);
         Check("the Output window names the connection when an account uses its own", logged("Risk data check for LEAD: using the account's own connection 'Orders+Data'"));

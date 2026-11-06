@@ -42,12 +42,52 @@ namespace NinjaTrader.NinjaScript.AddOns
             return EmOk + " <b>UI RECOVERED</b>\nNinjaTrader's UI was blocked for about " + FormatDuration(blocked) + ".";
         }
 
-        private static string MsgFlapping(string connection, string channel, int drops)
+        private static string MsgFlapping(string connection, string counts)
         {
-            return EmWarn + " <b>CONNECTION FLAPPING</b>\n"
-                + Html(connection) + Sep + Html(channel) + "\n"
-                + Num(drops) + " drops in " + Num(FlapWindowSec / 60) + " min. Further alerts for this channel are muted for "
-                + Num(FlapMuteSec / 60) + " min; /status shows the live state.";
+            return EmWarn + " <b>CONNECTION UNSTABLE</b>\n"
+                + Html(connection) + "\n"
+                + "Drops in " + Num(FlapWindowSec / 60) + " min: " + Html(counts) + "\n"
+                + "Single drops and reconnects are not announced until it has been stable for " + Num(FlapSettleSec / 60) + " min. "
+                + "If it goes down and stays down you get CONNECTION DOWN. /status shows the live state.";
+        }
+
+        private static string MsgRoll(int level, string instrument, DateTime expiry, int days, string usedBy)
+        {
+            string title = level >= 3 ? (days < 0 ? "CONTRACT EXPIRED" : "CONTRACT EXPIRES TODAY") : (level == 2 ? "ROLL NOW" : "ROLL SOON");
+            string icon = level >= 3 ? EmStop : (level == 2 ? EmSiren : EmWarn);
+            return icon + " <b>" + title + "</b>\n"
+                + "<code>" + Html(instrument) + "</code> " + (days < 0 ? "expired " : "expires ")
+                + expiry.ToString("ddd d MMM", CultureInfo.InvariantCulture) + " (" + Dtn.DaysLeftText(days) + ")\n"
+                + (string.IsNullOrEmpty(usedBy) ? string.Empty : "In use: " + Html(usedBy) + "\n")
+                + "Switch strategies, charts and copier tabs to the next contract, when flat.";
+        }
+
+        private static string MsgFlapDown(string connection, string channels, TimeSpan down)
+        {
+            return EmWarn + " <b>CONNECTION DOWN</b>\n"
+                + Html(connection) + Sep + Html(channels) + "\n"
+                + "Down for " + FormatDuration(down) + " and still down. It had been unstable.";
+        }
+
+        private static string MsgFlapUp(string connection)
+        {
+            return EmOk + " <b>RECONNECTED</b>\n"
+                + Html(connection) + "\n"
+                + "Back up. Still counted as unstable until it has been stable for " + Num(FlapSettleSec / 60) + " min.";
+        }
+
+        private static string MsgFlapReminder(string connection, int drops, TimeSpan flapping)
+        {
+            return EmWarn + " <b>STILL UNSTABLE</b>\n"
+                + Html(connection) + "\n"
+                + Num(drops) + " drops in " + FormatDuration(flapping) + ". /status shows the live state.";
+        }
+
+        private static string MsgFlapStable(string connection, int drops, TimeSpan flapped)
+        {
+            return EmOk + " <b>CONNECTION STABLE</b>\n"
+                + Html(connection) + "\n"
+                + "No drops for " + Num(FlapSettleSec / 60) + " min. It dropped " + Num(drops) + (drops == 1 ? " time" : " times") + " over " + FormatDuration(flapped) + ".";
         }
 
         private static string MsgStrategyEnabled(string name, string account, string state)
@@ -308,7 +348,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             const string tag = "\n<i>(simulated)</i>";
             string leader = ResolveLeaderName();
             if (leader.Length == 0)
-                leader = "LeaderAccount";
+            {
+                // No copier configured: the samples borrow the first tracked account's name, or a placeholder.
+                List<CbiAccount> tracked = SnapshotTrackedAccounts();
+                leader = tracked.Count > 0 ? tracked[0].Name : "Account1";
+            }
             string follower1 = "FollowerAccount1";
             string follower2 = "FollowerAccount2";
             DateTime now = NtNow();
@@ -335,7 +379,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             up.Channels.Add("data");
             EnqueueSample(BuildConnectionMessage(up) + tag, false);
 
-            EnqueueSample(MsgFlapping("MFFU", "orders", 4) + tag, true);
+            EnqueueSample(MsgFlapping("MFFU", "orders 4" + Sep + "data 4") + tag, true);
+            EnqueueSample(MsgRoll(1, "MNQ DEC26", NtNow().Date.AddDays(10), 10, "strategy MyBot (" + leader + ")") + tag, false);
             EnqueueSample(MsgUiFrozen(52) + tag, true);
             EnqueueSample(MsgUiRecovered(TimeSpan.FromSeconds(71)) + tag, false);
             EnqueueSample(MsgStrategyDisabled("MyStrategy", leader, "Realtime") + tag, true);

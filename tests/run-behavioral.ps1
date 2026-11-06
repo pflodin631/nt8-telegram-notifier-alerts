@@ -27,7 +27,7 @@ Get-ChildItem "$root\tests\behavioral\[0-9]*.cs" | ForEach-Object {
     $name = $_.BaseName
     & $csc /nologo /nowarn:0168,0219,0618 /out:"$out\$name.exe" /r:"$out\AddOn.dll" /r:System.Net.Http.dll $_.FullName
     if ($LASTEXITCODE -ne 0) { Write-Host "FAIL  $name (did not compile)"; $script:status = 1; return }
-    Push-Location $out
+    Push-Location $root    # the suites read config/ from the repository root
     & "$out\$name.exe" *> "$out\$name.log"
     $code = $LASTEXITCODE
     Pop-Location

@@ -41,7 +41,7 @@ namespace NinjaTrader.Cbi
     public class MarketData { public event EventHandler<MarketDataEventArgs> Update; }
     public class Instrument
     {
-        public string FullName; public MasterInstrument MasterInstrument; public Dispatcher Dispatcher; public MarketData MarketData;
+        public string FullName; public DateTime Expiry; public MasterInstrument MasterInstrument; public Dispatcher Dispatcher; public MarketData MarketData;
         public static Instrument GetInstrument(string name) { return null; }
     }
     public class Order { public string OrderId; public string Name; public OrderAction OrderAction; public OrderType OrderType; public int Quantity; public OrderState OrderState; public Instrument Instrument; }
@@ -82,7 +82,7 @@ namespace NinjaTrader.Cbi
 namespace NinjaTrader.NinjaScript
 {
     public enum State { SetDefaults, Configure, Active, DataLoaded, Historical, Transition, Realtime, Terminated }
-    public class StrategyBase { public string Name; public State State; }
+    public class StrategyBase { public string Name; public State State; public NinjaTrader.Cbi.Instrument Instrument; }
     public class NinjaScriptBase
     {
         public string Name; public string Description; public State State;

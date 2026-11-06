@@ -128,7 +128,7 @@ class H3
         Check("/floor clear falls back to the config floor and deletes the file", (double)Call("FloorFor", "ACC2") == 48000.0 && !System.IO.File.Exists(floorsFile));
         Check("/status shows net liq, floor and buffer", ((string)Call("BuildStatusReport")).Contains("buffer"));
 
-        // ---------- auto-flatten (opt in; confirmed by time; latches the account)
+        // ---------- auto-flatten (opt in; confirmed by time; locks the account)
         Connection.Connections.Clear(); Connection.Connections.Add(new Connection { Status = ConnectionStatus.Connected, PriceStatus = ConnectionStatus.Connected, Options = new ConnectionOptions { Name = "Sim" } });
         Set("cfgRiskAutoFlatten", true); Set("cfgRiskFlattenBuffer", 150.0); Set("cfgRiskConfirmSec", 2);
         Pos(a1, MarketPosition.Long, 3); a1.NetLiq = 48100; int before = a1.FlattenCount; DateTime t0 = DateTime.UtcNow;
@@ -188,10 +188,10 @@ class H3
         Call("RunSimulation"); d = Drain();
         Console.WriteLine("\n===== the 9 new /simulate samples =====");
         foreach (string m in d.Skip(Math.Max(0, d.Count - 11)).Take(10)) Console.WriteLine("--- \n" + m);
-        Check("/simulate sends 49 messages, in order and unmerged (29 in v0.2 + 10 in v0.3 + 8 in v0.4 + 2 in v0.5)", d.Count == 49 && d[0].Contains("SIMULATION") && d[48].Contains("Simulation finished"));
+        Check("/simulate sends 50 messages, in order and unmerged", d.Count == 50 && d[0].Contains("SIMULATION") && d[49].Contains("Simulation finished"));
         Console.WriteLine("\n===== /help =====\n" + Plain((string)Call("BuildHelpText")));
 
-        Console.WriteLine(fails == 0 ? "\nALL v0.2 CHECKS PASSED" : "\n" + fails + " CHECK(S) FAILED");
+        Console.WriteLine(fails == 0 ? "\nALL CHECKS PASSED" : "\n" + fails + " CHECK(S) FAILED");
         Environment.Exit(fails == 0 ? 0 : 1);
     }
 }
