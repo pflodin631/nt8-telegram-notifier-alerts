@@ -17,6 +17,7 @@ An AddOn that sends fills, connection problems and risk alerts to a private Tele
 **Alerts**
 - **Fills.** Each account's fills, merged into one message when several accounts fill together. If you use a trade copier (`LeaderAccount` set), each follower also shows its price difference from the leader in ticks. Partial fills are merged.
 - **Connections.** Orders and market data lost or restored, one message per connection. A connection that keeps dropping (4 drops in 5 minutes) gets one CONNECTION UNSTABLE alert, and its single drops are not announced after that. You still get CONNECTION DOWN if it stays down for a minute, STILL UNSTABLE every 30 minutes, and CONNECTION STABLE once it has been quiet for 10 minutes.
+- **Not trading.** `/status` has a Trade blockers line (connection down, stale data, lock, no strategy enabled) and the end-of-day report says how long nothing could trade. When an account that normally runs strategies cannot trade for 5 minutes you get NOT TRADING, then STILL NOT TRADING after 30 minutes and hourly, and one quiet TRADING POSSIBLE AGAIN. `/away` silences only these reminders, and STILL UNSTABLE keeps its own schedule. It cannot see whether Replikanto is on, and an exchange holiday looks like a normal day to it (see [limitations](docs/limitations.md))
 - **Problems.** NinjaTrader freezing, rejected orders, an unusual number of new orders, stale market data, a strategy enabled or disabled, followers out of sync with the leader, a position reopening after `/flatten`.
 - **Contract roll.** ROLL SOON, ROLL NOW and CONTRACT EXPIRES TODAY for a futures contract that a running strategy, a position or order, or today's fills are using, going by the expiry date NinjaTrader gives it. `/status` lists those contracts with the days left.
 - **Restart report** with how long NinjaTrader was down, an **end-of-day summary** per account, and a **software-change notice** when NinjaTrader or Replikanto changes between two starts.
@@ -38,6 +39,8 @@ An AddOn that sends fills, connection problems and risk alerts to a private Tele
 | Command | Does |
 |---|---|
 | `/status` | Whether anything blocks trading, connections, positions, P&L, risk and locks per account, copier status, strategies, data feeds |
+| `/away [8h\|2d]` | Silences the NOT TRADING reminders for a length of time (no argument = 12 hours, longest 7 days, always ends). Risk, RISK UNKNOWN, position and lock alerts still come. `/away` again changes the end time |
+| `/back` | Ends `/away` |
 | `/flatten [account]` | Closes positions and cancels working orders on the tracked accounts, or only on the account whose name contains the text you add (`/flatten 002`). Keeps checking until you are flat (up to 15 s) and reports how long it took, or **STILL EXPOSED**. Closes re-entries for `FlattenHoldSeconds` |
 | `/cancel [account]` | Cancels working orders and leaves positions alone |
 | `/lock [account]` | Flattens and keeps the account flat until `/unlock` or the session ends |

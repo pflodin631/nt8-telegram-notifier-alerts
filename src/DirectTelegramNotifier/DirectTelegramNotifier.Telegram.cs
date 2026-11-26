@@ -208,6 +208,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                     else
                         EnqueueReply(ExecuteUnlockCommand(argument));
                     break;
+                case "/away":
+                    EnqueueReply(HandleAwayCommand(argument));
+                    break;
+                case "/back":
+                    EnqueueReply(HandleBackCommand());
+                    break;
                 case "/selftest":
                     EnqueueReply(BuildSelfTestText(RunSelfTest()));
                     break;
@@ -506,6 +512,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 + "/cancel [account] \u2014 cancel working orders, keep positions\n"
                 + "/lock [account] \u2014 flatten and keep the account flat until /unlock or the session ends\n"
                 + "/unlock [account] \u2014 end a lock\n"
+                + "/away [8h|2d] \u2014 silence NOT TRADING reminders (default 12h, longest 7d). Risk and position alerts still come. /back ends it\n"
                 + "/risk \u2014 floors, buffers, daily loss, consistency and locks. /risk seed ACCOUNT 51000 sets a trailing high-water mark; /risk reset [account] restarts it\n"
                 + "/floor [account] [amount] \u2014 set a floor by hand (/floor 48250, /floor 002 48500, /floor clear)\n"
                 + "/selftest \u2014 can it read everything it needs, and is auto-flatten armed for each account\n"

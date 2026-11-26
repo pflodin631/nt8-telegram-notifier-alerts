@@ -63,7 +63,7 @@ class H8
         object s = Strat("Bot", "L", "Realtime");
         Call("ObserveTrading", t);
         Check("a strategy on the leader makes the leader expected; the follower has no expectation of its own", Expected("L") && !Expected("F1"));
-        var facts0 = (IList)Call("ReadTradeFacts");
+        var facts0 = (IList)Call("ReadTradeFacts", DateTime.UtcNow);
         object ff = null; foreach (object x in facts0) if ((string)x.GetType().GetField("Account").GetValue(x) == "F1") ff = x;
         Check("...but it inherits the leader's expectation", (bool)Type.GetType("NinjaTrader.NinjaScript.AddOns.DtnTrade, AddOn").GetMethod("IsExpected").Invoke(null, new object[] { ff }));
         Check("the line says Replikanto is not visible", Status().Contains("on/off state is not visible"));
@@ -83,7 +83,9 @@ class H8
         Check("a Terminated strategy counts as disabled", Status().Contains("no strategy enabled"));
         ((IDictionary)Get("strategies")).Remove(s);
         s = Strat("Bot", "L", "Historical");
-        Check("only Realtime counts as running: a Historical (loading) strategy is not enough", Status().Contains("all accounts: no strategy enabled"));
+        Check("a Historical (loading) strategy inside the start-up grace is not 'no strategy enabled'", Status().Contains("none found among the checks"));
+        SI.GetField("NotLiveSinceUtc").SetValue(s, DateTime.UtcNow.AddMinutes(-20));
+        Check("only Realtime counts as running: a strategy still Historical after the 15 minute grace is not enough", Status().Contains("all accounts: no strategy enabled"));
         ((IDictionary)Get("strategies")).Remove(s);
         s = Strat("Bot2", "L", "Realtime");
         Check("a strategy running again clears it", Status().Contains("none found among the checks"));
@@ -298,6 +300,18 @@ class H8
         altSt.State = NinjaTrader.NinjaScript.State.Terminated; Call("CheckStrategies");
         Check("alerts: Historical to Terminated still sends STRATEGY DISABLED", Drain().Any(m => m.Contains("STRATEGY DISABLED")));
         L.Strategies.Clear();
+
+        Console.WriteLine("\n--- 12. NinjaTrader does not say which connection an account uses: the reason says so");
+        ((IDictionary)Get("strategies")).Clear(); Exp().Clear();
+        tracked.Clear(); var X = new Account { Name = "X", NetLiq = 50000 }; tracked.Add(X);            // no Connection: the check falls back to "any data connection"
+        Set("cfgLeaderAccount", ""); Set("cfgAccountName", "X");
+        Connection.Connections.Clear();
+        var connA = new Connection { Status = ConnectionStatus.Connected, PriceStatus = ConnectionStatus.Disconnected, Options = new ConnectionOptions { Name = "Spare" } };
+        Connection.Connections.Add(connA);
+        line = Status();
+        Check("the fallback reason is labelled, not a bare 'data connection down'", line.Contains("a data connection is down (NinjaTrader does not say which one this account uses)") && !line.Contains("X: data connection down"));
+        X.Connection = connA;
+        Check("an account whose own connection is known keeps the plain wording", Status().Contains("X: data connection down"));
 
         Console.WriteLine("\n" + passes + " passed, " + fails + " failed");
         Environment.Exit(fails == 0 ? 0 : 1);

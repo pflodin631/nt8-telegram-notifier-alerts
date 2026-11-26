@@ -90,6 +90,43 @@ namespace NinjaTrader.NinjaScript.AddOns
                 + "No drops for " + Num(FlapSettleSec / 60) + " min. It dropped " + Num(drops) + (drops == 1 ? " time" : " times") + " over " + FormatDuration(flapped) + ".";
         }
 
+        private static string TradeGroupsText(IList<DtnTradeGroup> groups, int total)
+        {
+            StringBuilder sb = new StringBuilder();
+            foreach (DtnTradeGroup g in groups)
+                sb.Append(total > 1 && g.Accounts.Count == total ? "all accounts" : Html(string.Join(", ", g.Accounts.ToArray())))
+                  .Append(": ").Append(Html(string.Join(", ", g.Reasons.ToArray()))).Append("\n");
+            return sb.ToString();
+        }
+
+        private static string MsgNotTrading(IList<DtnTradeGroup> groups, int total, TimeSpan blockedFor, bool still)
+        {
+            return EmWarn + " <b>" + (still ? "STILL NOT TRADING" : "NOT TRADING") + "</b>\n"
+                + TradeGroupsText(groups, total)
+                + "Nothing can place a trade here for " + FormatDuration(blockedFor) + ". Reminders come less often the longer it lasts.\n"
+                + "<i>/status shows the live state. /away silences these reminders. Replikanto's on/off state is not visible to the notifier.</i>";
+        }
+
+        private static string MsgTradingPossibleAgain(TimeSpan blockedFor)
+        {
+            return EmOk + " <b>TRADING POSSIBLE AGAIN</b>\n"
+                + "No blocker found among the checks. It was blocked for " + FormatDuration(blockedFor) + ".\n"
+                + "<i>Check /status. Replikanto's on/off state is not visible to the notifier.</i>";
+        }
+
+        private static string MsgNagLapsed(IList<DtnTradeGroup> groups, int total)
+        {
+            return EmInfo + " <b>NOT TRADING reminders stopped</b>\n"
+                + "No strategy has run for " + Num((int)(DtnExpectation.IdleLimitSeconds / 3600)) + " hours of open market, so some of these accounts are no longer expected to trade.\n"
+                + (groups != null && groups.Count > 0 ? "What still blocks them:\n" + TradeGroupsText(groups, total) : "Nothing else is blocking them now.\n")
+                + "<i>/status shows the live state.</i>";
+        }
+
+        private static string MsgAwayEnded()
+        {
+            return EmInfo + " <b>AWAY ENDED</b>\nNOT TRADING reminders are on again.";
+        }
+
         private static string MsgStrategyEnabled(string name, string account, string state)
         {
             return EmPlay + " <b>STRATEGY ENABLED</b>\n"
@@ -383,6 +420,15 @@ namespace NinjaTrader.NinjaScript.AddOns
             EnqueueSample(MsgRoll(1, "MNQ DEC26", NtNow().Date.AddDays(10), 10, "strategy MyBot (" + leader + ")") + tag, false);
             EnqueueSample(MsgUiFrozen(52) + tag, true);
             EnqueueSample(MsgUiRecovered(TimeSpan.FromSeconds(71)) + tag, false);
+            DtnTradeGroup sampleGroup = new DtnTradeGroup();
+            sampleGroup.Accounts.AddRange(new[] { leader, "FollowerAccount1" });
+            sampleGroup.Reasons.Add("order connection down");
+            List<DtnTradeGroup> sampleGroups = new List<DtnTradeGroup> { sampleGroup };
+            EnqueueSample(MsgNotTrading(sampleGroups, 2, TimeSpan.FromMinutes(5), false) + tag, true);
+            EnqueueSample(MsgNotTrading(sampleGroups, 2, TimeSpan.FromMinutes(35), true) + tag, true);
+            EnqueueSample(MsgTradingPossibleAgain(TimeSpan.FromMinutes(41)) + tag, false);
+            EnqueueSample(MsgNagLapsed(sampleGroups, 2) + tag, false);
+            EnqueueSample(MsgAwayEnded() + tag, false);
             EnqueueSample(MsgStrategyDisabled("MyStrategy", leader, "Realtime") + tag, true);
             EnqueueSample(MsgStrategyEnabled("MyStrategy", leader, "Realtime") + tag, false);
             EnqueueSample(MsgStale("MNQ DEC26", TimeSpan.FromSeconds(140), true) + tag, true);

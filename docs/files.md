@@ -8,7 +8,7 @@ Everything is in `Documents\NinjaTrader 8`, next to NinjaTrader's own files. Rec
 | `DirectTelegramNotifier.log` and `.log.old` | A text copy of every alert sent | At 2 MB the log becomes `.log.old`, replacing the previous `.old`. About 4 MB at most |
 | `DirectTelegramNotifier-fills.csv` and `.old` | One row per account per fill. `role`, `ticks_worse_than_leader` and `lag_ms_vs_leader` are filled only when `LeaderAccount` is set | Rolls at 10 MB, about 20 MB at most |
 | `DirectTelegramNotifier-risk.csv` and `.old` | Every risk reading, for replaying a session (`EnableRiskLog`) | Rolls at 50 MB, about 100 MB at most. Set `EnableRiskLog=false` if you do not want it |
-| `DirectTelegramNotifier.state` | Trailing high-water marks, daily baselines, locks, activity clocks, a `/leader` choice and the last NinjaTrader and Replikanto versions seen | About 1 KB per account. Rewritten in place |
+| `DirectTelegramNotifier.state` | Trailing high-water marks, daily baselines, locks, activity clocks, a `/leader` choice, the last NinjaTrader and Replikanto versions seen, how long ago a strategy ran on each account (`strat|`), blocked time for the end-of-day report (`blk|`) and an `/away` end time (`away=`). Older versions skip these lines | About 1 KB per account. Rewritten in place |
 | `DirectTelegramNotifier.floors` | Floors set with `/floor`. Only exists while at least one is set | Tiny |
 | `DirectTelegramNotifier.heartbeat` | A timestamp the heartbeat reads | Under 1 KB, rewritten in place |
 | `DirectTelegramNotifier.state.tmp` | A temporary copy while the state file is saved | Deleted right after |

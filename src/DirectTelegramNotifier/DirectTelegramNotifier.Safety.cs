@@ -1486,6 +1486,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                             knownSoftware = value;
                             continue;
                         }
+                        if (key == "away")
+                        {
+                            LoadAwayLine(value);
+                            continue;
+                        }
                         int bar = key.IndexOf('|');
                         if (bar <= 0)
                             continue;

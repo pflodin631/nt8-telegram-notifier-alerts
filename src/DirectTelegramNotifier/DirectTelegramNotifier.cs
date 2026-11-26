@@ -261,6 +261,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             public string AccountName;
             public string State;
             public CbiInstrument Instrument;
+            public DateTime NotLiveSinceUtc;            // when it was first seen Historical or Transition (see StrategyCountsOn); MinValue = not waiting
         }
 
         private sealed class RefComparer : IEqualityComparer<object>
@@ -758,7 +759,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                     ScanOrders();
                 if (cfgEnableStrategyWatch)
                     CheckStrategies();
-                ObserveTrading(DateTime.UtcNow);
 
                 CheckStaleData();
                 CheckCopyMismatch();
@@ -772,6 +772,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 CheckDeliveryBackup(DateTime.UtcNow);
                 CheckMachineHealth();
                 CheckEndOfDay(DateTime.UtcNow);
+                ObserveTrading(DateTime.UtcNow);                    // last: nothing before it can be held back by it
             }
             catch (Exception ex)
             {

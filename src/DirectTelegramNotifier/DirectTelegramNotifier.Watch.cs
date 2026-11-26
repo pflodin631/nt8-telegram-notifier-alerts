@@ -697,6 +697,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             return string.Equals(state, "Realtime", StringComparison.OrdinalIgnoreCase);
         }
 
+        // Historical (loading history) and Transition (switching to live): a strategy that was just enabled or restarted is in these first.
+        private static bool IsStartingState(string state)
+        {
+            return string.Equals(state, "Historical", StringComparison.OrdinalIgnoreCase) || string.Equals(state, "Transition", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static bool IsTerminatedState(string state)
         {
             return string.Equals(state, "Terminated", StringComparison.OrdinalIgnoreCase);

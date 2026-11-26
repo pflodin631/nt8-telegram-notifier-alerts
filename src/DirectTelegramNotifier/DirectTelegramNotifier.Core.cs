@@ -1448,17 +1448,23 @@ namespace NinjaTrader.NinjaScript.AddOns
         public string Account = string.Empty;
         public bool OrderConnectionDown;
         public bool DataConnectionDown;
+        public bool DataCheckFallback;                  // NinjaTrader does not say which connection this account uses: "any data connection down"
+        public bool ConnectionFlapping;                 // this account's connection is one STILL UNSTABLE is already reporting on
         public string StaleInstrument;                  // a feed this account holds or runs a strategy on that is connected but sends no ticks, or null
         public bool Locked;                             // locked by the notifier (session lock or hold)
         public bool StrategiesKnown;                    // strategy watch is on and has scanned; false = unknown, not "none"
         public int RunningStrategies;                   // in the Realtime state, on this account
+        public int StartingStrategies;                  // Historical or Transition, within the start-up grace (they load history before they trade)
         public bool Expected;                           // a strategy ran on this account recently (trading hours only)
         public string Leader = string.Empty;            // set when this account is a follower: the strategies run on the leader
         public int LeaderRunning;
+        public int LeaderStarting;
         public bool LeaderExpected;
         // A follower copies the leader's orders, so what stops the leader stops it too. Filled for followers only.
         public bool LeaderOrderConnectionDown;
         public bool LeaderDataConnectionDown;
+        public bool LeaderDataCheckFallback;
+        public bool LeaderConnectionFlapping;
         public string LeaderStaleInstrument;
         public bool LeaderLocked;
     }
@@ -1540,13 +1546,20 @@ namespace NinjaTrader.NinjaScript.AddOns
         // applies to an account that is expected to run one (a follower goes by its leader).
         public static List<string> Blockers(DtnTradeFacts f)
         {
+            return Blockers(f, false);
+        }
+
+        // assumeExpected: ask what would block the account if it were still expected to trade (used for an account whose expectation
+        // ran out in the middle of an outage, so that "no strategy enabled" still counts as blocking it).
+        public static List<string> Blockers(DtnTradeFacts f, bool assumeExpected)
+        {
             List<string> r = new List<string>();
             if (f == null)
                 return r;
             if (f.OrderConnectionDown)
-                r.Add("order connection down");
+                r.Add(OrderDownReason);
             if (f.DataConnectionDown)
-                r.Add("data connection down");
+                r.Add(f.DataCheckFallback ? DataDownAnyReason : DataDownReason);
             if (!string.IsNullOrEmpty(f.StaleInstrument))
                 r.Add("market data for " + f.StaleInstrument + " is stale");
             if (f.Locked)
@@ -1558,16 +1571,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // What stops the leader stops the copied trades. A reason the account already has itself is not repeated.
                 string who = "leader " + f.Leader + ": ";
                 if (f.LeaderOrderConnectionDown && !f.OrderConnectionDown)
-                    r.Add(who + "order connection down");
+                    r.Add(who + OrderDownReason);
                 if (f.LeaderDataConnectionDown && !f.DataConnectionDown)
-                    r.Add(who + "data connection down");
+                    r.Add(who + (f.LeaderDataCheckFallback ? DataDownAnyReason : DataDownReason));
                 if (!string.IsNullOrEmpty(f.LeaderStaleInstrument) && f.LeaderStaleInstrument != f.StaleInstrument)
                     r.Add(who + "market data for " + f.LeaderStaleInstrument + " is stale");
                 if (f.LeaderLocked && !f.Locked)
                     r.Add(who + "locked by the notifier");
             }
-            bool running = f.RunningStrategies > 0 || (follower && f.LeaderRunning > 0);
-            if (f.StrategiesKnown && IsExpected(f) && !running)
+            bool running = f.RunningStrategies > 0 || f.StartingStrategies > 0 || (follower && (f.LeaderRunning > 0 || f.LeaderStarting > 0));
+            if (f.StrategiesKnown && (assumeExpected || IsExpected(f)) && !running)
                 r.Add("no strategy enabled");
             return r;
         }
@@ -1601,10 +1614,215 @@ namespace NinjaTrader.NinjaScript.AddOns
             return groups;
         }
 
+        public const string LockedReason = "locked by the notifier";
+        public const string OrderDownReason = "order connection down";
+        public const string DataDownReason = "data connection down";
+        public const string DataDownAnyReason = "a data connection is down (NinjaTrader does not say which one this account uses)";
+        public const double StartGraceSeconds = 15 * 60.0;     // a strategy that is Historical or Transition counts as starting for this long
+        public const double DefaultAwaySeconds = 12 * 3600.0;
+        public const double MaxAwaySeconds = 7 * 86400.0;
+
+        // What the NOT TRADING reminders go by: the blockers without the lock. A lock alone starts nothing (LOCKED already told you), and a
+        // locked account is not asked about "no strategy enabled": the lock message tells you to switch the strategies off.
+        public static List<string> NagReasons(DtnTradeFacts f)
+        {
+            return NagReasons(f, false);
+        }
+
+        public static List<string> NagReasons(DtnTradeFacts f, bool assumeExpected)
+        {
+            List<string> r = new List<string>();
+            if (f == null)
+                return r;
+            bool locked = f.Locked || (!string.IsNullOrEmpty(f.Leader) && f.LeaderLocked);
+            foreach (string reason in Blockers(f, assumeExpected))
+            {
+                if (reason.EndsWith(LockedReason, StringComparison.Ordinal))
+                    continue;
+                if (locked && reason == "no strategy enabled")
+                    continue;
+                r.Add(reason);
+            }
+            return r;
+        }
+
+        // True when every NOT TRADING reason of this account is a connection that STILL UNSTABLE already reports on (a flapping connection).
+        // That alert owns the case, so the NOT TRADING reminder is held back. A connection that is down and steady is not covered.
+        public static bool CoveredByFlap(DtnTradeFacts f)
+        {
+            List<string> reasons = NagReasons(f);
+            if (reasons.Count == 0)
+                return false;
+            foreach (string reason in reasons)
+            {
+                bool own = reason == OrderDownReason || reason == DataDownReason || reason == DataDownAnyReason;
+                bool leader = reason.StartsWith("leader ", StringComparison.Ordinal)
+                    && (reason.EndsWith(OrderDownReason, StringComparison.Ordinal) || reason.EndsWith(DataDownReason, StringComparison.Ordinal) || reason.EndsWith(DataDownAnyReason, StringComparison.Ordinal));
+                if (!((own && f.ConnectionFlapping) || (leader && f.LeaderConnectionFlapping)))
+                    return false;
+            }
+            return true;
+        }
+
+        // "/away 8h", "/away 2d", "/away 90m". No argument = 12 hours. A length only, never a clock time. At most 7 days.
+        public static bool ParseAway(string text, out TimeSpan span, out string error)
+        {
+            span = TimeSpan.FromSeconds(DefaultAwaySeconds);
+            error = null;
+            string t = (text ?? string.Empty).Trim().ToLowerInvariant();
+            if (t.Length == 0)
+                return true;
+
+            const string usage = "Use a length like 8h, 2d or 90m (no clock times). The longest is 7d.";
+            if (t.IndexOf(':') >= 0 || t.EndsWith("am", StringComparison.Ordinal) || t.EndsWith("pm", StringComparison.Ordinal) || t.StartsWith("until", StringComparison.Ordinal) || t.StartsWith("at ", StringComparison.Ordinal))
+            {
+                error = "Clock times are not accepted. " + usage;
+                return false;
+            }
+
+            char unit = t[t.Length - 1];
+            double perUnit = unit == 'm' ? 60.0 : unit == 'h' ? 3600.0 : unit == 'd' ? 86400.0 : 0.0;
+            int count;
+            if (perUnit == 0.0 || !int.TryParse(t.Substring(0, t.Length - 1), NumberStyles.None, CultureInfo.InvariantCulture, out count))
+            {
+                error = "Not a length: '" + (text ?? string.Empty).Trim() + "'. " + usage;
+                return false;
+            }
+            if (count <= 0)
+            {
+                error = "The length must be more than zero. " + usage;
+                return false;
+            }
+            double seconds = count * perUnit;
+            if (seconds > MaxAwaySeconds)
+            {
+                error = "The longest is 7d. " + usage;
+                return false;
+            }
+            span = TimeSpan.FromSeconds(seconds);
+            return true;
+        }
+
         // The state file keeps the idle time per account: "strat|account=seconds".
         public static bool TryParseIdle(string value, out double seconds)
         {
             return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out seconds) && seconds >= 0 && !double.IsInfinity(seconds);
+        }
+    }
+
+    public enum DtnNagEvent { None, NotTrading, StillNotTrading, PossibleAgain, Lapsed }
+
+    public sealed class DtnNagResult
+    {
+        public DtnNagEvent Event;
+        public double BlockedSeconds;
+        public int Reminders;
+    }
+
+    // The NOT TRADING reminder schedule for the whole setup (one episode, one message, however many accounts). Not thread-safe: the caller locks.
+    //   - first reminder after FirstSeconds of continuous inability, then SecondSeconds later, then every CapSeconds
+    //   - a clear shorter than ClearHoldSeconds does not reset the clock
+    //   - nothing is sent outside trading hours; the clock restarts when the market reopens
+    //   - muted (/away, or only a connection that STILL UNSTABLE already reports) silences every message and restarts the clock when it ends
+    //   - a gap between ticks longer than MaxGapSeconds (sleeping PC, stalled timer) restarts the clock
+    //   - one quiet message when it clears (PossibleAgain), or when the accounts stop being expected while still blocked (Lapsed)
+    public sealed class DtnTradeNag
+    {
+        public const double FirstSeconds = 300;
+        public const double SecondSeconds = 1800;
+        public const double CapSeconds = 3600;
+        public const double ClearHoldSeconds = 60;
+        public const double MaxGapSeconds = 120;
+
+        private DateTime blockedSince = DateTime.MinValue;
+        private DateTime clearSince = DateTime.MinValue;
+        private DateTime nextDue = DateTime.MinValue;
+        private DateTime last = DateTime.MinValue;
+        private int sent;
+        private bool active;
+        private bool paused;
+        private bool wasMuted;
+
+        // A NOT TRADING went out in this episode.
+        public bool Active { get { return active; } }
+        // Inside an episode (counting, or reminders running).
+        public bool InEpisode { get { return blockedSince != DateTime.MinValue; } }
+
+        // blocked: an expected account has a blocker. lapsed: an account of the episode is no longer expected to trade, so the
+        // episode ends as Lapsed ("reminders stopped") and never as "trading possible again", with or without a reason left on it.
+        public DtnNagResult Tick(DateTime now, bool blocked, bool lapsed, bool inHours, bool muted)
+        {
+            DtnNagResult r = new DtnNagResult();
+            bool gap = last != DateTime.MinValue && (now < last || (now - last).TotalSeconds > MaxGapSeconds);       // a clock that went back is a gap too
+            last = now;
+            bool muteEnded = wasMuted && !muted;
+            wasMuted = muted;
+
+            if (gap || muteEnded)
+                RestartClock(now);
+            if (!inHours)
+            {
+                paused = true;
+                return r;
+            }
+            if (paused)
+            {
+                paused = false;
+                RestartClock(now);
+            }
+
+            if (blocked)
+            {
+                clearSince = DateTime.MinValue;
+                if (blockedSince == DateTime.MinValue)
+                {
+                    blockedSince = now;
+                    sent = 0;
+                    active = false;
+                    nextDue = now.AddSeconds(FirstSeconds);
+                }
+                if (!muted && now >= nextDue)
+                {
+                    r.Event = active ? DtnNagEvent.StillNotTrading : DtnNagEvent.NotTrading;
+                    active = true;
+                    sent++;
+                    nextDue = now.AddSeconds(sent <= 1 ? SecondSeconds : CapSeconds);
+                    r.BlockedSeconds = (now - blockedSince).TotalSeconds;
+                    r.Reminders = sent;
+                }
+                return r;
+            }
+
+            if (blockedSince != DateTime.MinValue)
+            {
+                if (clearSince == DateTime.MinValue)
+                    clearSince = now;
+                if ((now - clearSince).TotalSeconds >= ClearHoldSeconds)
+                {
+                    if (active && !muted)
+                    {
+                        r.Event = lapsed ? DtnNagEvent.Lapsed : DtnNagEvent.PossibleAgain;
+                        r.BlockedSeconds = (clearSince - blockedSince).TotalSeconds;
+                        r.Reminders = sent;
+                    }
+                    blockedSince = DateTime.MinValue;
+                    clearSince = DateTime.MinValue;
+                    active = false;
+                    sent = 0;
+                }
+            }
+            return r;
+        }
+
+        private void RestartClock(DateTime now)
+        {
+            clearSince = DateTime.MinValue;
+            if (blockedSince != DateTime.MinValue)
+            {
+                blockedSince = now;
+                sent = 0;
+                nextDue = now.AddSeconds(FirstSeconds);
+            }
         }
     }
 

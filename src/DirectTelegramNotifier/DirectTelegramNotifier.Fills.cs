@@ -677,7 +677,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             sb.Append(EmChart).Append(" <b>STATUS</b>").Append(Sep).Append(TimeText(NtNow())).Append("\n\n");
 
             sb.Append(AutoFlattenLine()).Append("\n\n");
-            sb.Append(BuildTradeLine()).Append("\n\n");
+            sb.Append(BuildTradeLine()).Append("\n").Append(AwayLine()).Append("\n");
             sb.Append("<b>Connections</b>\n").Append(BuildConnectionsBlock()).Append("\n");
 
             string leaderName = ResolveLeaderName();

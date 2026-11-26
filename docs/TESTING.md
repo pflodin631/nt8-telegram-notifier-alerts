@@ -26,7 +26,7 @@ On Windows: `powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1`, whic
 bash tests/run-behavioral.sh
 ```
 
-Needs Mono (`mcs`, `mono`). Six suites run against `tests/behavioral/NinjaTraderStandIn.cs`, a minimal copy of the NinjaTrader API surface the add-on uses, and write only to a temporary folder (never to your real NinjaTrader folder). `tests\run-behavioral.ps1` does the same with the compiler built into Windows; it has not been run on Windows yet.
+Needs Mono (`mcs`, `mono`). Nine suites run against `tests/behavioral/NinjaTraderStandIn.cs`, a minimal copy of the NinjaTrader API surface the add-on uses, and write only to a temporary folder (never to your real NinjaTrader folder). `tests\run-behavioral.ps1` does the same with the compiler built into Windows; it has not been run on Windows yet.
 
 ## Replay tests
 
@@ -134,6 +134,15 @@ Settings: `InactivityDays=7`, `InactivityAlerts=2,1`.
 
 Report anything that differs as an issue, with the Output window lines (redact tokens, IDs and account numbers).
 
+### Not trading and /away
+- [ ] `/status` shows a Trade blockers line. With everything fine it says none were found among the checks.
+- [ ] Disable the strategy on the leader and wait: after about 5 minutes one NOT TRADING arrives for all accounts, then STILL NOT TRADING after 30 minutes. Enable it: one quiet TRADING POSSIBLE AGAIN. Write down what state `/status` shows for the disabled strategy before you enable it again (Realtime would mean a disabled strategy still counts as running).
+- [ ] Disconnect the connection from NinjaTrader's Connections menu for more than 5 minutes: NOT TRADING names the connection. Reconnect: TRADING POSSIBLE AGAIN.
+- [ ] `/away 1h`: no NOT TRADING for an outage, but a RISK UNKNOWN alert still comes. `/back` ends it. Restart NinjaTrader during `/away`: `/status` still shows the Away line.
+- [ ] `/away 18:00` and `/away 8d` are refused with a message.
+- [ ] During an unstable connection (flapping) with nothing else wrong, you get STILL UNSTABLE and no NOT TRADING. A connection that stays down for more than 5 minutes gives NOT TRADING.
+- [ ] Restart NinjaTrader with strategies enabled: no NOT TRADING while they load (up to 15 minutes in Historical).
+
 ## What has been checked
 
 Unit tests cover the pure logic, including the risk rules. Behavioural tests compile the whole add-on against a stand-in for the NinjaTrader API and drive it through its real entry points. Replay tests feed recorded risk logs through the risk logic. All three run on every push. None of them can prove how NinjaTrader or your broker behaves, which is what the Sim column is for.
@@ -150,6 +159,8 @@ Unit tests cover the pure logic, including the risk rules. Behavioural tests com
 | `/status`, `/copy`, `/simulate`, `FlattenConfirm` buttons | behavioural | ✅ |
 | Problem alerts sent before routine ones; routine ones merged | behavioural | ✅ |
 | Same warning on several accounts sent as one message; critical alerts not held | unit, behavioural | ⬜ |
+| Trade blockers line in `/status` and the Could not trade block in the end-of-day report | unit, behavioural | ⬜ (which state a disabled but still listed strategy reports, and the data-check path for the MFFU accounts, need NinjaTrader to confirm) |
+| NOT TRADING, STILL NOT TRADING, TRADING POSSIBLE AGAIN; `/away`, `/back` | unit, behavioural | ⬜ (needs a real MFFU disconnect, and a restart while away) |
 | Heartbeat ping | — | ✅ |
 | Heartbeat held when Telegram refuses messages | behavioural | ⬜ |
 | Stale-data alerts, custom schedules | unit (windows) | ⬜ |

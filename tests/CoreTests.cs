@@ -57,6 +57,8 @@ internal static class CoreTests
         Json();
         AlertGrouping();
         TradeBlockers();
+        TradeNagMachine();
+        AwayParsing();
 
         Console.WriteLine();
         Console.WriteLine(passed + " passed, " + failed + " failed");
@@ -1113,6 +1115,163 @@ internal static class CoreTests
         bt.Add(60, new List<string> { "order connection down", "no strategy enabled" });
         Check(bt.TradingSeconds == 180 && bt.BlockedSeconds == 120, "blocked time counts only the steps with a reason");
         Check(J(bt.Reasons) == "order connection down | no strategy enabled", "reasons are listed once, in the order seen");
+    }
+
+    // drives the reminder schedule: one tick every 30 s, returns the events as "seconds:Event"
+    private static string RunNag(DtnTradeNag n, ref DateTime t, int seconds, bool blocked, bool still, bool inHours, bool away)
+    {
+        List<string> ev = new List<string>();
+        DateTime start = t;
+        for (int i = 0; i < seconds / 30; i++)
+        {
+            t = t.AddSeconds(30);
+            DtnNagResult r = n.Tick(t, blocked, still, inHours, away);
+            if (r.Event != DtnNagEvent.None)
+                ev.Add(((int)(t - start).TotalSeconds - 30).ToString(CultureInfo.InvariantCulture) + ":" + r.Event);       // seconds since the first tick of this run
+        }
+        return string.Join(" ", ev.ToArray());
+    }
+
+    private static void TradeNagMachine()
+    {
+        DateTime t0 = new DateTime(2026, 11, 23, 15, 0, 0, DateTimeKind.Utc);
+
+        // 5 min, then +30 min, then hourly (capped)
+        DateTime t = t0; DtnTradeNag n = new DtnTradeNag();
+        Eq("300:NotTrading 2100:StillNotTrading 5700:StillNotTrading 9300:StillNotTrading", RunNag(n, ref t, 9390, true, false, true, false), "reminders at 5 min, +30 min, then hourly");
+        Check(n.Active && n.InEpisode, "an active episode");
+        Eq("", RunNag(n, ref t, 270, true, false, true, false), "...and nothing extra in between");
+
+        // a blip under 5 minutes is silent, and so is the clear
+        t = t0; n = new DtnTradeNag();
+        Eq("", RunNag(n, ref t, 240, true, false, true, false) + RunNag(n, ref t, 600, false, false, true, false), "blocked 4 min then clear: no message at all");
+        Check(!n.InEpisode, "...and the episode is over");
+
+        // a clear shorter than the hold does not reset the clock
+        t = t0; n = new DtnTradeNag();
+        string a1 = RunNag(n, ref t, 270, true, false, true, false);
+        string a2 = RunNag(n, ref t, 30, false, false, true, false);
+        string a3 = RunNag(n, ref t, 60, true, false, true, false);
+        Eq("", a1 + a2, "blocked 4.5 min, clear 30 s: nothing yet");
+        Eq("0:NotTrading", a3, "a 30 s clear does not restart the 5 minute clock: the reminder comes at the original time");
+        t = t0; n = new DtnTradeNag();
+        RunNag(n, ref t, 270, true, false, true, false);
+        RunNag(n, ref t, 90, false, false, true, false);                    // clear for 60 s (the first clear tick starts the count)
+        Check(!n.InEpisode, "a clear of 60 s or more ends the episode");
+        Eq("300:NotTrading", RunNag(n, ref t, 330, true, false, true, false), "...and the next blockage counts from zero");
+
+        // clearing after a reminder: one TRADING POSSIBLE AGAIN, once
+        t = t0; n = new DtnTradeNag();
+        RunNag(n, ref t, 600, true, false, true, false);
+        Eq("60:PossibleAgain", RunNag(n, ref t, 300, false, false, true, false), "clear for 60 s after a reminder: POSSIBLE AGAIN once");
+        // expectation lapsed while still blocked: not "possible again"
+        t = t0; n = new DtnTradeNag();
+        RunNag(n, ref t, 600, true, false, true, false);
+        Eq("60:Lapsed", RunNag(n, ref t, 300, false, true, true, false), "accounts no longer expected but still blocked: Lapsed, never PossibleAgain");
+
+        // market closed: nothing is sent and nothing advances; restarts at 5 min after reopen
+        t = t0; n = new DtnTradeNag();
+        RunNag(n, ref t, 240, true, false, true, false);
+        Eq("", RunNag(n, ref t, 3600, true, false, false, false), "market closed: nothing sent");
+        Eq("300:NotTrading", RunNag(n, ref t, 330, true, false, true, false), "reopen: 5 minutes from the reopen, not from before the break");
+        t = t0; n = new DtnTradeNag();
+        RunNag(n, ref t, 600, true, false, true, false);
+        RunNag(n, ref t, 1800, false, false, false, false);                // cleared during the break
+        Eq("60:PossibleAgain", RunNag(n, ref t, 120, false, false, true, false), "cleared during the break: POSSIBLE AGAIN after the reopen");
+
+        // away silences everything, the clock restarts when it ends
+        t = t0; n = new DtnTradeNag();
+        Eq("", RunNag(n, ref t, 7200, true, false, true, true), "away: no reminder in two hours");
+        Eq("300:NotTrading", RunNag(n, ref t, 330, true, false, true, false), "away ends: first reminder 5 minutes later, not at once");
+        t = t0; n = new DtnTradeNag();
+        RunNag(n, ref t, 600, true, false, true, false);
+        Eq("", RunNag(n, ref t, 3600, true, false, true, true), "away after a reminder: silent");
+        Eq("300:StillNotTrading", RunNag(n, ref t, 330, true, false, true, false), "...and when it ends the backoff restarts at 5 minutes");
+        t = t0; n = new DtnTradeNag();
+        RunNag(n, ref t, 600, true, false, true, false);
+        Eq("", RunNag(n, ref t, 600, false, false, true, true), "cleared while away: no POSSIBLE AGAIN");
+        Check(!n.InEpisode, "...the episode is closed quietly");
+
+        // a long gap between ticks (sleeping PC) restarts the clock
+        t = t0; n = new DtnTradeNag();
+        RunNag(n, ref t, 270, true, false, true, false);
+        t = t.AddHours(5);
+        Eq("", n.Tick(t, true, false, true, false).Event.ToString() == "None" ? "" : "event", "after a 5 hour gap: no instant reminder");
+        Eq("270:NotTrading", RunNag(n, ref t, 330, true, false, true, false), "...the 5 minutes count from the wake-up tick");
+        // a clock that goes back is a gap too
+        t = t0; n = new DtnTradeNag();
+        RunNag(n, ref t, 270, true, false, true, false);
+        t = t.AddMinutes(-3);
+        Eq("None", n.Tick(t, true, false, true, false).Event.ToString(), "the clock went back 3 minutes: no reminder");
+        Eq("270:NotTrading", RunNag(n, ref t, 330, true, false, true, false), "...and the 5 minutes count from there, not from before");
+
+        // muted for a connection STILL UNSTABLE reports: nothing sent, episode kept, clock restarts when the mute ends
+        t = t0; n = new DtnTradeNag();
+        Eq("", RunNag(n, ref t, 3600, true, false, true, true), "muted: nothing in an hour");
+        Eq("300:NotTrading", RunNag(n, ref t, 330, true, false, true, false), "unmuted and still blocked: first reminder 5 minutes later");
+    }
+
+    private static void AwayParsing()
+    {
+        TimeSpan s; string err;
+        Check(DtnTrade.ParseAway("", out s, out err) && s == TimeSpan.FromHours(12), "/away alone: 12 hours");
+        Check(DtnTrade.ParseAway("8h", out s, out err) && s == TimeSpan.FromHours(8), "8h");
+        Check(DtnTrade.ParseAway("2d", out s, out err) && s == TimeSpan.FromDays(2), "2d");
+        Check(DtnTrade.ParseAway(" 90M ", out s, out err) && s == TimeSpan.FromMinutes(90), "90m, spaces and capitals are fine");
+        Check(DtnTrade.ParseAway("7d", out s, out err) && s == TimeSpan.FromDays(7), "7d is the longest");
+        Check(DtnTrade.ParseAway("168h", out s, out err) && s == TimeSpan.FromDays(7), "168h is 7d");
+        foreach (string bad in new[] { "8d", "169h", "10081m", "0h", "8", "abc", "-3h", "1.5h", "18:00", "8pm", "until 18:00", "at 6pm", "h", "7d1h" })
+        {
+            bool ok = DtnTrade.ParseAway(bad, out s, out err);
+            Check(!ok && !string.IsNullOrEmpty(err), "/away " + bad + " is refused");
+        }
+        DtnTrade.ParseAway("18:00", out s, out err);
+        Check(err.Contains("Clock times are not accepted"), "a clock time gets the clock-time message");
+        DtnTrade.ParseAway("8d", out s, out err);
+        Check(err.Contains("7d"), "too long names the limit");
+
+        // NagReasons: a lock alone starts nothing
+        DtnTradeFacts f = Tf("A1"); f.Locked = true; f.Expected = true;
+        Eq("", J(DtnTrade.NagReasons(f)), "locked and no strategy: nothing (the lock message already said)");
+        f = Tf("A1"); f.Locked = true; f.Expected = true; f.RunningStrategies = 1;
+        Eq("", J(DtnTrade.NagReasons(f)), "locked, strategy running: nothing");
+        f = Tf("A1"); f.Locked = true; f.Expected = true; f.OrderConnectionDown = true;
+        Eq("order connection down", J(DtnTrade.NagReasons(f)), "locked and the connection is down: the connection is still reported, the lock is not");
+        f = Tf("F1"); f.Leader = "L"; f.LeaderLocked = true; f.LeaderExpected = true;
+        Eq("", J(DtnTrade.NagReasons(f)), "follower of a locked leader: nothing");
+        f = Tf("A1"); f.Expected = true;
+        Eq("no strategy enabled", J(DtnTrade.NagReasons(f)), "not locked: no strategy enabled counts");
+
+        // data check fallback is labelled, and the leader's too
+        f = Tf("A1"); f.DataConnectionDown = true; f.DataCheckFallback = true;
+        Check(J(DtnTrade.Blockers(f)).Contains("NinjaTrader does not say which one this account uses"), "the any-connection fallback says so in the reason");
+        f = Tf("F1"); f.Leader = "L"; f.LeaderDataConnectionDown = true; f.LeaderDataCheckFallback = true;
+        Check(J(DtnTrade.Blockers(f)).StartsWith("leader L: a data connection is down (NinjaTrader does not say"), "...also for the leader's reason");
+        f = Tf("A1"); f.DataConnectionDown = true;
+        Eq("data connection down", J(DtnTrade.Blockers(f)), "an account with its own connection keeps the plain wording");
+
+        // starting strategies (Historical, Transition within the grace) are not "no strategy enabled"
+        f = Tf("A1"); f.Expected = true; f.StartingStrategies = 1;
+        Eq("", J(DtnTrade.Blockers(f)), "a strategy that is still starting: no 'no strategy enabled'");
+        f = Tf("F1"); f.Leader = "L"; f.LeaderExpected = true; f.LeaderStarting = 1;
+        Eq("", J(DtnTrade.Blockers(f)), "a follower whose leader's strategy is starting: nothing either");
+
+        // CoveredByFlap: only a connection STILL UNSTABLE reports on
+        f = Tf("A1"); f.Expected = true; f.RunningStrategies = 1; f.OrderConnectionDown = true; f.ConnectionFlapping = true;
+        Check(DtnTrade.CoveredByFlap(f), "flapping connection is the only reason: covered");
+        f.ConnectionFlapping = false;
+        Check(!DtnTrade.CoveredByFlap(f), "the same connection down and steady: not covered");
+        f = Tf("A1"); f.Expected = true; f.OrderConnectionDown = true; f.ConnectionFlapping = true; f.StrategiesKnown = true;
+        Check(!DtnTrade.CoveredByFlap(f), "a flapping connection plus no strategy enabled: two reasons, not covered");
+        f = Tf("A1"); f.Expected = true; f.DataConnectionDown = true; f.DataCheckFallback = true; f.ConnectionFlapping = true; f.RunningStrategies = 1;
+        Check(DtnTrade.CoveredByFlap(f), "the any-connection fallback reason is covered when a connection is flapping");
+        f = Tf("A1"); f.Expected = true; f.RunningStrategies = 1; f.StaleInstrument = "MNQ DEC26"; f.ConnectionFlapping = true;
+        Check(!DtnTrade.CoveredByFlap(f), "stale data is not something STILL UNSTABLE reports: not covered");
+        f = Tf("F1"); f.Leader = "L"; f.LeaderExpected = true; f.LeaderOrderConnectionDown = true; f.LeaderConnectionFlapping = true; f.LeaderStarting = 1;
+        Check(DtnTrade.CoveredByFlap(f), "a follower with only the leader's flapping connection: covered");
+        f.LeaderConnectionFlapping = false;
+        Check(!DtnTrade.CoveredByFlap(f), "...not when the leader's connection is steady");
+        Check(!DtnTrade.CoveredByFlap(Tf("A1")), "nothing wrong: not covered");
     }
 
     private static void AlertGrouping()
