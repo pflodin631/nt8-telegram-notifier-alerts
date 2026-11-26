@@ -31,3 +31,13 @@ Add a section to `CHANGELOG.md` (plain language), bump `AddOnVersion` and the he
 - Real MFFU account numbers are still in old public git history; `git filter-repo` offered, no decision yet.
 - Merged per-account warnings (`DtnAlertGrouper`, 10 s window, critical alerts never held): in the working tree, not released, not yet seen in NinjaTrader.
 - README needs a redacted screenshot.
+
+## Workflow (keeps token use down)
+- One task per session. Finish, commit, then /clear before the next unrelated task. Use /rename first if I may want to resume it.
+- Plan first for anything that changes behaviour (alerts, risk, flatten, lock, config): propose the approach and wait for my OK. Small mechanical edits (docs, version bumps, wording) do not need a plan.
+- Don't read the whole repo. Start from the file or function I name. DirectTelegramNotifier.Core.cs is large: read the relevant region only.
+- When running tests, show me only the summary line and any failures, not the full output.
+- Run bash tests/run-behavioral.sh once per change, not repeatedly (about 90 s).
+
+## Compact instructions
+When compacting, keep: the task in progress and its decisions, files changed and why, failing test names and error messages, and what I still have to check in NinjaTrader. Drop: successful test output, file listings and anything already committed.
