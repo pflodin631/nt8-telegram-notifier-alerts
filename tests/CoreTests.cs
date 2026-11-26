@@ -38,6 +38,7 @@ internal static class CoreTests
     {
         RiskLevels();
         StaticAndTrailingFloors();
+        Hysteresis();
         DailyLoss();
         FloorValidation();
         Modes();
@@ -106,6 +107,83 @@ internal static class CoreTests
         Eq(48400, ifloor, "intraday floor = peak 50,900 - 2,500");
         Eq(48400, C.TrailingFloor(double.NaN, 2500, double.NaN, 48400), "no high-water keeps the previous floor");
         Eq(51000, C.NextHighWater(51000, double.NaN), "missing reading keeps the high-water");
+    }
+
+    // 0.6.1: a value hovering around an alert level must not alert again on every swing (three accounts sent dozens of
+    // "DAILY LOSS 50%" / "BACK UNDER ALERT LEVELS" pairs during one MNQ trade).
+    private static void Hysteresis()
+    {
+        DateTime t0 = Fri;
+        List<double> pct = new List<double> { 50, 75, 90 };
+        Eq(50, C.HeldLevel(290, 600, pct, 50), "loss 290 of 600 (48%) while latched at 50%: stays at 50%");
+        Eq(50, C.HeldLevel(272, 600, pct, 50), "loss 272 (45.3%): still inside the 5-point margin");
+        Eq(0, C.HeldLevel(268, 600, pct, 50), "loss 268 (44.7%): clear of the margin, level drops");
+        Eq(75, C.HeldLevel(470, 600, pct, 90), "latched at 90%, loss 470 (78%): clears 85%, drops to 75%");
+        Eq(90, C.HeldLevel(520, 600, pct, 90), "latched at 90%, loss 520 (87%): inside the margin");
+        Eq(90, C.HeldLevel(560, 600, pct, 50), "rising is never delayed");
+        Eq(100, C.HeldLevel(700, 600, pct, 0), "past the limit is never delayed");
+        Eq(0, C.HeldLevel(100, 600, pct, 0), "nothing latched, nothing alerts");
+
+        List<double> buf = C.ParseDollarList("1500,750,300");
+        Eq(300, C.HeldRiskLevel(310, buf, 300), "buffer 310 while latched at 300: stays");
+        Eq(300, C.HeldRiskLevel(325, buf, 300), "buffer 325: inside the margin (300 + 30)");
+        Check(C.HeldRiskLevel(400, buf, 300) == 750, "buffer 400: clear of the margin, loosens to 750");
+        Check(double.IsPositiveInfinity(C.HeldRiskLevel(5000, buf, 300)), "plenty of room: no level");
+        Eq(150, C.HeldRiskLevel(100, new List<double> { 150 }, double.PositiveInfinity) == 150 ? 150 : 0, "first alert is immediate");
+
+        // the screenshots: limit 600, loss swinging between about 282 and 312
+        DtnRiskSettings dl = new DtnRiskSettings { Mode = C.ModeOff, DailyLimitText = "600", DailyLossAlerts = pct };
+        DtnRiskState d = new DtnRiskState();
+        Tick(d, dl, t0, "s", 50000);
+        int alerts = 0, backs = 0;
+        double[] swing = { 49700, 49718, 49688, 49715, 49690, 49720, 49685, 49716, 49692, 49719 };
+        for (int i = 0; i < 40; i++)
+        {
+            DtnRiskResult r = Tick(d, dl, t0.AddSeconds(1 + i), "s", swing[i % swing.Length]);
+            alerts += Count(r, DtnRiskEventKind.DailyLoss);
+            backs += Count(r, DtnRiskEventKind.DailyLossBack);
+        }
+        Check(alerts == 1 && backs == 0, "40 swings around the 50% level: one alert, no BACK message (got " + alerts + " and " + backs + ")");
+        DtnRiskResult rec = Tick(d, dl, t0.AddSeconds(100), "s", 49900);
+        Check(Count(rec, DtnRiskEventKind.DailyLossBack) == 1, "a real recovery (loss 100) still says BACK");
+        rec = Tick(d, dl, t0.AddSeconds(101), "s", 49690);
+        Check(Count(rec, DtnRiskEventKind.DailyLoss) == 1, "...and a new slide to 50% alerts again");
+
+        // consistency uses the same margin: cap 428.57, levels 75/90
+        DtnRiskSettings cs = new DtnRiskSettings { Mode = C.ModeOff, StartingBalance = 50000, ConsistencyPercent = 30, ConsistencyAlerts = new List<double> { 75, 90 } };
+        DtnRiskState c = new DtnRiskState();
+        Tick(c, cs, t0, "s", 51000);
+        int calerts = 0, cbacks = 0;
+        for (int i = 0; i < 20; i++)
+        {
+            DtnRiskResult r = Tick(c, cs, t0.AddSeconds(1 + i), "s", i % 2 == 0 ? 51330 : 51310);
+            calerts += Count(r, DtnRiskEventKind.Consistency);
+            cbacks += Count(r, DtnRiskEventKind.ConsistencyBack);
+        }
+        Check(calerts == 1 && cbacks == 0, "consistency hovering around the 75% level: one alert, no BACK");
+
+        // floor buffers
+        DtnRiskSettings fl = new DtnRiskSettings { Mode = C.ModeManual, ManualFloor = 48000, RiskBuffers = buf };
+        DtnRiskState f = new DtnRiskState();
+        Tick(f, fl, t0, "s", 50500);
+        int falerts = 0, frec = 0;
+        for (int i = 0; i < 20; i++)
+        {
+            DtnRiskResult r = Tick(f, fl, t0.AddSeconds(1 + i), "s", i % 2 == 0 ? 48290 : 48320);
+            falerts += Count(r, DtnRiskEventKind.RiskBuffer);
+            frec += Count(r, DtnRiskEventKind.RiskRecovered);
+        }
+        Check(falerts == 1 && frec == 0, "floor buffer hovering around 300: one alert, no RECOVERED");
+
+        // safety: the held alert level must never drive auto-flatten
+        DtnRiskSettings auto = new DtnRiskSettings { Mode = C.ModeOff, DailyLimitText = "1000", DailyLossAlerts = new List<double> { 50 }, DailyLossAutoFlatten = true, ConfirmSeconds = 2 };
+        DtnRiskState a = new DtnRiskState();
+        Tick(a, auto, t0, "s", 50000);
+        Tick(a, auto, t0.AddSeconds(1), "s", 48990);                 // over the limit: the clock starts
+        Check(a.DailyBreachSince != DateTime.MinValue, "limit reached: the flatten clock starts");
+        Tick(a, auto, t0.AddSeconds(2), "s", 49100);                 // 90%: no longer at the limit
+        Check(a.DailyBreachSince == DateTime.MinValue, "back under the limit: the clock resets even though the alert level is held");
+        Check(Tick(a, auto, t0.AddSeconds(10), "s", 49100).FireReason == null, "...and nothing flattens an account that is under its limit");
     }
 
     private static void DailyLoss()

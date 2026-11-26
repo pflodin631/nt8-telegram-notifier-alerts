@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1 (2026-11-19)
+
+Fixed
+- **Daily-loss alerts repeated while a trade was open.** When the loss hovered around an alert level (for example 282 to 312 of a 600 limit, around the 50% level), each account sent "DAILY LOSS 50%" and "BACK UNDER ALERT LEVELS" again on every swing, dozens of messages per trade. An alert level now resets only after the loss is 5 percentage points of the limit below it, so the same alert is not sent again until the loss has really gone down and come back up. The "back under" notice follows the same rule. Consistency alerts and risk-buffer (floor) alerts had the same problem and get the same margin (risk buffers: 10% of the alert level, at least 25). Alerts for a rising loss are not delayed, and auto-flatten still uses the real loss, not the held alert level.
+
+Changed
+- `docs/TESTING.md`: removed a link that pointed to itself. Added `CONTRIBUTING.md` and `.gitattributes` (shell scripts keep Unix line endings).
+
 ## 0.6.0 (2026-11-05)
 
 Fixes, cleanup, and a few new alerts.

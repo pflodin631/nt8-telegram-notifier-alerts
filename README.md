@@ -6,7 +6,7 @@
 
 An AddOn that sends fills, connection problems and risk alerts to a private Telegram chat, and lets you check and flatten your accounts from your phone. It talks straight to the Telegram Bot API: no NinjaTrader Share Services, no relay server, no extra DLLs. It works for personal and prop-firm accounts; you describe your own risk rules in the config, and there are no firm presets.
 
-> **Status: beta (v0.6.0).** It can flatten and lock accounts on command and, if you switch it on, automatically. Read [Limitations](#limitations) and the [Disclaimer](#disclaimer) before running it anywhere near live money. Not affiliated with or endorsed by NinjaTrader or Telegram.
+> **Status: beta (v0.6.1).** It can flatten and lock accounts on command and, if you switch it on, automatically. Read [Limitations](#limitations) and the [Disclaimer](#disclaimer) before running it anywhere near live money. Not affiliated with or endorsed by NinjaTrader or Telegram.
 
 **Tested with:** NinjaTrader 8.1.8.4, a Tradovate connection (MFFU), Sim101 and MFFU evaluation accounts, and the Replikanto trade copier ([setup and notes](docs/replikanto.md)).
 
@@ -156,7 +156,7 @@ Parts of the code were written with AI assistance (Claude) and tested as describ
 
 ## Contributing
 
-Issues and pull requests are welcome. For bugs, include the add-on version, your NinjaTrader version and the Output window lines, with tokens, IDs, account numbers and URLs redacted. Run `bash tests/run-tests.sh`, `bash tests/run-behavioral.sh` and `bash tests/run-replay.sh` (Mono) before a pull request; CI runs the same.
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains how to report a bug, run the tests and send a change.
 
 ## License
 

@@ -57,7 +57,7 @@ using Dtn = NinjaTrader.NinjaScript.AddOns.DirectTelegramNotifierCore;
 //     ignored, so a stale /flatten never runs after a restart or reboot.
 //   * /flatten covers the tracked account(s) only, unless UseGlobalFlattenEverything=true.
 //
-//  Version 0.6.0, MIT License. Not affiliated with or endorsed by NinjaTrader or Telegram.
+//  Version 0.6.1, MIT License. Not affiliated with or endorsed by NinjaTrader or Telegram.
 //  Provided as is, without warranty. Automated trading and remote order control carry risk.
 //
 //  Written in C# 5 syntax so it compiles on any NinjaScript compiler version.
@@ -109,7 +109,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private const int    DeliveryTestSec      = 300;          // while Telegram rejects sends, try a silent test message this often
         private const string DefaultStuckStates   = "Submitted,ChangePending,ChangeSubmitted,CancelPending,CancelSubmitted";
         private const string StateFileName        = "DirectTelegramNotifier.state";
-        private const string AddOnVersion        = "0.6.0";
+        private const string AddOnVersion        = "0.6.1";
         private const string HeartbeatFileName    = "DirectTelegramNotifier.heartbeat";
         private const string Sep                  = " \u00B7 ";
 

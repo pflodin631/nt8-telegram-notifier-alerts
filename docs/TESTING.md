@@ -136,7 +136,7 @@ Report anything that differs as an issue, with the Output window lines (redact t
 
 ## What has been checked
 
-Unit tests cover the pure logic, including the risk rules. Behavioural tests compile the whole add-on against a stand-in for the NinjaTrader API and drive it through its real entry points. Replay tests feed recorded risk logs through the risk logic. All three run on every push ([docs/TESTING.md](docs/TESTING.md)). None of them can prove how NinjaTrader or your broker behaves, which is what the Sim column is for.
+Unit tests cover the pure logic, including the risk rules. Behavioural tests compile the whole add-on against a stand-in for the NinjaTrader API and drive it through its real entry points. Replay tests feed recorded risk logs through the risk logic. All three run on every push. None of them can prove how NinjaTrader or your broker behaves, which is what the Sim column is for.
 
 ✅ seen working inside NinjaTrader (Sim or evaluation account); ⬜ not yet. For rules that play out over days, ✅ means seen with seeded values (`/activity`, `/risk seed`); the last row is about real multi-day sessions.
 

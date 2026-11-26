@@ -267,6 +267,31 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         // The tightest alert level the buffer has reached: 0 = at or below the floor, +infinity = no level reached.
+        // How far a value must clear an alert level before that level can alert again, as points of the limit (daily loss, consistency).
+        public const double LevelMarginPoints = 5.0;
+
+        // Daily-loss / consistency level with a margin: a rising value alerts at once, but the level only drops once the value is
+        // LevelMarginPoints under the level it is latched at. Without that, a value hovering around a threshold alerts again every swing.
+        public static int HeldLevel(double value, double limit, IList<double> percents, int current)
+        {
+            int raw = DailyLossLevel(value, limit, percents);
+            if (raw >= current || current <= 0)
+                return raw;
+            double clear = limit * (Math.Min(current, 100) - LevelMarginPoints) / 100.0;
+            return value < clear ? raw : current;
+        }
+
+        // Same for the risk-buffer levels (dollars above the floor, tightest first). The level only loosens once the buffer is
+        // 10% of the latched level (at least 25) above it.
+        public static double HeldRiskLevel(double buffer, IList<double> ascendingLevels, double current)
+        {
+            double raw = RiskLevel(buffer, ascendingLevels);
+            if (raw <= current || double.IsPositiveInfinity(current))
+                return raw;
+            double margin = Math.Max(25.0, 0.10 * Math.Max(current, 0.0));
+            return buffer > current + margin ? raw : current;
+        }
+
         public static double RiskLevel(double buffer, IList<double> ascendingLevels)
         {
             if (double.IsNaN(buffer))
@@ -601,8 +626,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (!double.IsNaN(floor))
             {
                 double buffer = netLiq - floor;
-                double level = RiskLevel(buffer, s.RiskBuffers);
                 double previous = rs.FloorLevel;
+                double level = HeldRiskLevel(buffer, s.RiskBuffers, previous);
                 rs.FloorLevel = level;
                 if (level < previous)
                     res.Add(DtnRiskEventKind.RiskBuffer, true, netLiq, floor, buffer, level, 0, false, source);
@@ -633,7 +658,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (!double.IsNaN(limit) && !double.IsNaN(rs.SessionStart))
             {
                 double loss = rs.SessionStart - netLiq;
-                int pct = DailyLossLevel(loss, limit, s.DailyLossAlerts);
+                int pct = HeldLevel(loss, limit, s.DailyLossAlerts, rs.DailyLevel);
                 if (pct > rs.DailyLevel)
                 {
                     rs.DailyLevel = pct;
@@ -645,14 +670,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                     res.Add(DtnRiskEventKind.DailyLossBack, false, loss, limit, 0, 0, 0, false, null);
                 }
 
-                if (s.DailyLossAutoFlatten && pct >= 100 && !sessionLocked && res.FireReason == null)
+                if (s.DailyLossAutoFlatten && DailyLossLevel(loss, limit, s.DailyLossAlerts) >= 100 && !sessionLocked && res.FireReason == null)
                 {
                     if (rs.DailyBreachSince == DateTime.MinValue)
                         rs.DailyBreachSince = now;
                     else if ((now - rs.DailyBreachSince).TotalSeconds >= s.ConfirmSeconds)
                         res.FireReason = "daily loss limit: down " + N2(loss) + " today (limit " + N2(limit) + ")";
                 }
-                else if (pct < 100)
+                else if (DailyLossLevel(loss, limit, s.DailyLossAlerts) < 100)   // flattening uses the real level, never the held alert level
                 {
                     rs.DailyBreachSince = DateTime.MinValue;
                 }
@@ -663,7 +688,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 double cap = ConsistencyCap(rs.SessionStartBalance - s.StartingBalance, s.ConsistencyPercent, s.ConsistencyTarget);
                 double today = netLiq - rs.SessionStartBalance;
-                int clevel = DailyLossLevel(today, cap, s.ConsistencyAlerts);
+                int clevel = HeldLevel(today, cap, s.ConsistencyAlerts, rs.ConsistencyLevel);
                 if (clevel > rs.ConsistencyLevel)
                 {
                     rs.ConsistencyLevel = clevel;
@@ -675,14 +700,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                     res.Add(DtnRiskEventKind.ConsistencyBack, false, today, cap, 0, 0, 0, false, null);
                 }
 
-                if (s.ConsistencyAutoFlatten && clevel >= 100 && !sessionLocked && res.FireReason == null)
+                if (s.ConsistencyAutoFlatten && DailyLossLevel(today, cap, s.ConsistencyAlerts) >= 100 && !sessionLocked && res.FireReason == null)
                 {
                     if (rs.ConsistencyBreachSince == DateTime.MinValue)
                         rs.ConsistencyBreachSince = now;
                     else if ((now - rs.ConsistencyBreachSince).TotalSeconds >= s.ConfirmSeconds)
                         res.FireReason = "consistency rule: today's profit " + N2(today) + " reached the cap " + N2(cap);
                 }
-                else if (clevel < 100)
+                else if (DailyLossLevel(today, cap, s.ConsistencyAlerts) < 100)
                 {
                     rs.ConsistencyBreachSince = DateTime.MinValue;
                 }
