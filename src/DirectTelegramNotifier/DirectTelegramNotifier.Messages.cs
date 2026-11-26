@@ -406,6 +406,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             EnqueueSample(MsgLockEnforced(follower1, "flattened MNQ DEC26", 1, true) + tag, true);
             EnqueueSample(MsgUnlocked(leader, "/unlock") + tag, false);
             EnqueueSample(MsgDailyLoss(leader, 760.00, 1000.00, 75) + tag, true);
+            EnqueueSample(DtnAlertGrouper.Render(new List<DtnAlertPart>
+            {
+                DtnAlertPart.FromMessage("DailyLoss|50", leader, MsgDailyLoss(leader, 504.50, 1000.00, 50), 1, true),
+                DtnAlertPart.FromMessage("DailyLoss|50", follower1, MsgDailyLoss(follower1, 506.00, 1000.00, 50), 1, true),
+                DtnAlertPart.FromMessage("DailyLoss|50", follower2, MsgDailyLoss(follower2, 501.25, 1000.00, 50), 1, true)
+            }) + tag, true);
             EnqueueSample(MsgDailyLoss(leader, 1012.50, 1000.00, 100) + tag, true);
             EnqueueSample(MsgDailyLossRecovered(leader, 310.00, 1000.00) + tag, false);
             EnqueueSample(MsgRiskUnknown(leader, "market data for MNQ DEC26 is stale", TimeSpan.Zero, 0) + tag, true);

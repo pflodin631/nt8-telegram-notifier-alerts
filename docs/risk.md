@@ -39,6 +39,21 @@ The end of day is `EodReportTime` in `EodTimeZoneId`. If your firm closes its da
 
 A wrong rule gives false comfort or false alarms. **Test on Sim first** ([TESTING.md](TESTING.md)), and never treat this as your only protection.
 
+## Several accounts, one message
+
+With copied accounts the same warning usually fires on all of them within seconds. Instead of one message per account, a warning waits up to 10 seconds for the other accounts and goes out as one message, a line per account:
+
+```
+⚠️ DAILY LOSS 50% · 3 accounts
+MFFUEVREOD000000001 · down 304.00 today · limit 600.00
+MFFUEVREOD000000002 · down 306.00 today · limit 600.00
+MFFUEVREOD000000003 · down 301.25 today · limit 600.00
+```
+
+This applies to daily loss and consistency alerts below 90%, risk-buffer alerts above your tightest level, the inactivity clock, and the "back under" and "recovered" notices. An account that is alone in the window gets the same message as before, 10 seconds later.
+
+**Never held:** daily loss 90% and LIMIT REACHED, consistency 90% and CAP REACHED, the tightest risk-buffer level and below the floor, RISK UNKNOWN, ACCOUNT LOCKED and LOCK ENFORCED. These go out in the same second, and any warning still waiting goes out just before them so the order stays right. Auto-flatten never waits for any message.
+
 ## Prop-firm rules: consistency and inactivity
 
 Prop firms add rules beyond the drawdown. The notifier tracks two of them from numbers you enter. It does not know your firm's rules: they differ between plans and change over time. Enter the values from your own account's up-to-date rules.

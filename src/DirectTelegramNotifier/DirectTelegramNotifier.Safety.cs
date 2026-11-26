@@ -393,11 +393,41 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        // Warnings that the same rule raises for several accounts (copied trades cross a level seconds apart) are held this long
+        // and sent as one message. Critical alerts are never held. 0 = merge only what one check raises at the same time.
+        private int alertGroupMs = 10000;
+        private readonly object alertGroupLock = new object();
+        private readonly DtnAlertGrouper alertGrouper = new DtnAlertGrouper();
+
+        // Adds new parts and sends the groups that are due. sendAll: something urgent goes out right after this, so send every
+        // waiting warning first and the messages stay in the order they happened.
+        private void SendGroupedAlerts(List<DtnAlertPart> parts, DateTime now, bool sendAll)
+        {
+            List<DtnAlertOut> due;
+            lock (alertGroupLock)
+            {
+                if (parts != null)
+                    foreach (DtnAlertPart p in parts)
+                        alertGrouper.Add(p, now);
+                if (alertGrouper.Count == 0)
+                    return;
+                due = sendAll ? alertGrouper.TakeAll() : alertGrouper.TakeDue(now, alertGroupMs / 1000.0);
+            }
+            foreach (DtnAlertOut m in due)
+            {
+                if (m.Loud)
+                    EnqueueText(m.Text);
+                else
+                    EnqueueQuiet(m.Text);
+            }
+        }
+
         private void RiskTick(DateTime now)
         {
             List<string> loud = new List<string>();
             List<string> quiet = new List<string>();
             List<CriticalAlert> critical = new List<CriticalAlert>();
+            List<DtnAlertPart> grouped = new List<DtnAlertPart>();
             string session = CurrentSessionKey();
 
             ExpireHolds(now);
@@ -433,7 +463,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // A flat account that reports no value is not checked: there is nothing to read, and nothing open to protect.
                 bool notChecked = !exposed && RiskMonitored(a.Name) && FlatReadingUnusable(a, netLiq);
                 NoteRiskNotChecked(a.Name, notChecked);
-                string lockReason = notChecked ? null : EvaluateAccountRisk(a.Name, netLiq, balance, why, session, now, loud, quiet, critical);
+                string lockReason = notChecked ? null : EvaluateAccountRisk(a.Name, netLiq, balance, why, session, now, loud, quiet, critical, grouped);
                 if (lockReason != null)
                 {
                     string locked = LockAndFlatten(a, lockReason);
@@ -444,6 +474,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     EnforceLock(a, now, loud, critical);
             }
 
+            SendGroupedAlerts(grouped, now, loud.Count > 0);
             foreach (string text in loud)
                 EnqueueText(text);
             foreach (string text in quiet)
@@ -577,7 +608,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         // Runs the core state machine for one account under riskLock and turns its events into messages.
         // Returns a lock reason when auto-flatten should fire. `critical` collects the alerts that also go to the backup channel.
-        private string EvaluateAccountRisk(string name, double netLiq, double balance, string unknownWhy, string session, DateTime now, List<string> loud, List<string> quiet, List<CriticalAlert> critical)
+        private string EvaluateAccountRisk(string name, double netLiq, double balance, string unknownWhy, string session, DateTime now, List<string> loud, List<string> quiet, List<CriticalAlert> critical, List<DtnAlertPart> grouped)
         {
             if (double.IsNaN(netLiq) && !riskReadProblemReported)
             {
@@ -614,7 +645,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 foreach (DtnRiskEvent e in result.Events)
                 {
                     string text = RenderRiskEvent(name, e);
-                    if (e.Loud)
+                    string groupKey = Dtn.AlertGroupKey(e, settings);
+                    if (groupKey != null)
+                        grouped.Add(DtnAlertPart.FromMessage(groupKey, name, text, e.Kind == DtnRiskEventKind.RiskBuffer ? 3 : 1, e.Loud));
+                    else if (e.Loud)
                         loud.Add(text);
                     else
                         quiet.Add(text);

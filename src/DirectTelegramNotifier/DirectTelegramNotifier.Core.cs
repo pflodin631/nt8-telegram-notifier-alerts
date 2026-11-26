@@ -768,6 +768,24 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        // Which risk events may wait to be merged with the same alert for other accounts, and under what key. null = send at once.
+        // Never: critical events, the 90% and 100% levels, RISK UNKNOWN, and anything that is not a level alert or its recovery.
+        public static string AlertGroupKey(DtnRiskEvent e, DtnRiskSettings s)
+        {
+            if (e == null || IsCriticalEvent(e, s))
+                return null;
+            switch (e.Kind)
+            {
+                case DtnRiskEventKind.RiskBuffer:      return "RiskBuffer";
+                case DtnRiskEventKind.RiskRecovered:   return "RiskRecovered";
+                case DtnRiskEventKind.DailyLoss:       return e.N < 90 ? "DailyLoss|" + e.N.ToString(CultureInfo.InvariantCulture) : null;
+                case DtnRiskEventKind.DailyLossBack:   return "DailyLossBack";
+                case DtnRiskEventKind.Consistency:     return e.N < 90 ? "Consistency|" + e.N.ToString(CultureInfo.InvariantCulture) : null;
+                case DtnRiskEventKind.ConsistencyBack: return "ConsistencyBack";
+                default:                               return null;
+            }
+        }
+
         // A send Telegram refused for good: wrong token, blocked bot, wrong or unreachable chat. These do not fix themselves, so the
         // heartbeat must not claim alerts are being delivered. Message-specific errors (too long, bad markup) are not in this group.
         public static bool IsFatalSendError(int code, string description)
@@ -1389,6 +1407,124 @@ namespace NinjaTrader.NinjaScript.AddOns
     }
 
     // ---- types for the risk state machine (prefixed so they cannot clash with other add-ons in this namespace)
+
+    // One account's share of an alert that can be merged with the same alert for other accounts.
+    // Single is the message exactly as it is sent when no other account joins it.
+    public sealed class DtnAlertPart
+    {
+        public string Key;          // alerts with the same Key (and Loud) are merged
+        public string Account;      // a newer part for the same account replaces the older one in a group
+        public string Header;       // first line, e.g. "<b>DAILY LOSS 50%</b>"
+        public string Line;         // this account's line in a merged message
+        public string Note;         // lines shown under a merged message; a line several accounts share is shown once
+        public string Single;
+        public bool Loud;
+
+        // Splits a message laid out as: header line, accountLines lines about the account, then notes.
+        // The account lines are joined with the separator into one line for the merged message.
+        public static DtnAlertPart FromMessage(string key, string account, string single, int accountLines, bool loud)
+        {
+            string[] lines = (single ?? string.Empty).Split('\n');
+            int n = Math.Max(1, Math.Min(accountLines, lines.Length - 1));
+            DtnAlertPart p = new DtnAlertPart { Key = key, Account = account, Single = single, Loud = loud, Header = lines[0] };
+            p.Line = lines.Length > 1 ? string.Join(DtnAlertGrouper.Separator, lines, 1, n) : account;
+            p.Note = lines.Length > n + 1 ? string.Join("\n", lines, n + 1, lines.Length - n - 1) : null;
+            return p;
+        }
+    }
+
+    public sealed class DtnAlertOut
+    {
+        public string Text;
+        public bool Loud;
+        public int Accounts;
+    }
+
+    // Holds warnings for a short window so the same alert for several accounts (copied trades cross a level a few seconds apart)
+    // goes out as one message. Only for warnings: critical alerts never come through here. Not thread-safe: the caller locks.
+    public sealed class DtnAlertGrouper
+    {
+        public const string Separator = " · ";
+
+        private sealed class Group
+        {
+            public string Key;
+            public bool Loud;
+            public DateTime FirstUtc;
+            public List<DtnAlertPart> Parts = new List<DtnAlertPart>();
+        }
+
+        private readonly List<Group> groups = new List<Group>();
+
+        public int Count { get { return groups.Count; } }
+
+        public void Add(DtnAlertPart part, DateTime now)
+        {
+            if (part == null)
+                return;
+            Group g = null;
+            foreach (Group x in groups)
+                if (x.Key == part.Key && x.Loud == part.Loud)
+                {
+                    g = x;
+                    break;
+                }
+            if (g == null)
+            {
+                g = new Group { Key = part.Key, Loud = part.Loud, FirstUtc = now };
+                groups.Add(g);
+            }
+            int same = g.Parts.FindIndex(p => string.Equals(p.Account, part.Account, StringComparison.OrdinalIgnoreCase));
+            if (same >= 0)
+                g.Parts[same] = part;
+            else
+                g.Parts.Add(part);
+        }
+
+        // Groups whose first alert has waited windowSeconds or more, oldest first. windowSeconds <= 0 releases everything.
+        public List<DtnAlertOut> TakeDue(DateTime now, double windowSeconds)
+        {
+            List<DtnAlertOut> res = new List<DtnAlertOut>();
+            for (int i = 0; i < groups.Count; )
+            {
+                Group g = groups[i];
+                if (windowSeconds <= 0 || (now - g.FirstUtc).TotalSeconds >= windowSeconds)
+                {
+                    res.Add(new DtnAlertOut { Text = Render(g.Parts), Loud = g.Loud, Accounts = g.Parts.Count });
+                    groups.RemoveAt(i);
+                }
+                else
+                    i++;
+            }
+            return res;
+        }
+
+        public List<DtnAlertOut> TakeAll()
+        {
+            return TakeDue(DateTime.MaxValue, 0);
+        }
+
+        public static string Render(IList<DtnAlertPart> parts)
+        {
+            if (parts == null || parts.Count == 0)
+                return string.Empty;
+            if (parts.Count == 1)
+                return parts[0].Single;
+            StringBuilder sb = new StringBuilder();
+            sb.Append(parts[0].Header).Append(Separator).Append(parts.Count.ToString(CultureInfo.InvariantCulture)).Append(" accounts");
+            foreach (DtnAlertPart p in parts)
+                sb.Append("\n").Append(p.Line);
+            List<string> notes = new List<string>();
+            foreach (DtnAlertPart p in parts)
+                if (!string.IsNullOrEmpty(p.Note))
+                    foreach (string line in p.Note.Split('\n'))
+                        if (line.Length > 0 && !notes.Contains(line))
+                            notes.Add(line);
+            foreach (string n in notes)
+                sb.Append("\n").Append(n);
+            return sb.ToString();
+        }
+    }
 
     public enum DtnRiskEventKind
     {

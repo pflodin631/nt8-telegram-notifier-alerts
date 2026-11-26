@@ -52,6 +52,7 @@ class H8
         NinjaTrader.Core.Globals.UserDataDir = Dir;
         T = Type.GetType("NinjaTrader.NinjaScript.AddOns.DirectTelegramNotifier, AddOn");
         O = Activator.CreateInstance(T, true);
+        Set("alertGroupMs", 0);                                           // older checks expect each alert at once; grouping has its own checks
         Set("flattenCheckMaxMs", 1500); Set("autoFlattenWatchMs", 0); Set("cfgFlattenHoldSec", 0);
         Set("cfgAccountName", "LEAD,F1,F2,G1"); Set("cfgLeaderAccount", "LEAD"); Set("authorizedUserId", 42L);
         Set("startedUtc", DateTime.UtcNow.AddMinutes(-30)); Set("started", true);

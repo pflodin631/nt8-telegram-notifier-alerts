@@ -55,6 +55,7 @@ internal static class CoreTests
         BoundariesTwo();
         BackupAndOpenPnl();
         Json();
+        AlertGrouping();
 
         Console.WriteLine();
         Console.WriteLine(passed + " passed, " + failed + " failed");
@@ -992,5 +993,89 @@ internal static class CoreTests
         Dictionary<string, object> msg = ((Dictionary<string, object>)result[0])["message"] as Dictionary<string, object>;
         Eq("/status \u00e9", (string)msg["text"], "json unicode escape");
         Check(Convert.ToInt64(((Dictionary<string, object>)msg["chat"])["id"], CultureInfo.InvariantCulture) == -100123, "json negative number");
+    }
+
+    private static DtnAlertPart DL(string acct, double loss, int pct)
+    {
+        string msg = "<b>DAILY LOSS " + pct + "%</b>\n" + acct + " · down " + loss.ToString("0.00", CultureInfo.InvariantCulture) + " today · limit 600.00";
+        return DtnAlertPart.FromMessage("DailyLoss|" + pct, acct, msg, 1, true);
+    }
+
+    private static void AlertGrouping()
+    {
+        DateTime t = new DateTime(2026, 11, 26, 15, 0, 0, DateTimeKind.Utc);
+
+        // which risk events may wait
+        DtnRiskSettings s = new DtnRiskSettings { RiskBuffers = new List<double> { 500, 1000, 1500 } };
+        Func<DtnRiskEventKind, int, double, string> key = (k, n, d) => C.AlertGroupKey(new DtnRiskEvent { Kind = k, N = n, D = d }, s);
+        Eq("DailyLoss|50", key(DtnRiskEventKind.DailyLoss, 50, 0), "daily loss 50% may wait, keyed by level");
+        Eq(null, key(DtnRiskEventKind.DailyLoss, 90, 0), "daily loss 90% goes out at once");
+        Eq(null, key(DtnRiskEventKind.DailyLoss, 100, 0), "daily loss limit reached goes out at once");
+        Eq(null, key(DtnRiskEventKind.Consistency, 100, 0), "consistency cap reached goes out at once");
+        Eq("Consistency|75", key(DtnRiskEventKind.Consistency, 75, 0), "consistency 75% may wait");
+        Eq("RiskBuffer", key(DtnRiskEventKind.RiskBuffer, 0, 1000), "risk buffer at a looser level may wait");
+        Eq(null, key(DtnRiskEventKind.RiskBuffer, 0, 500), "risk buffer at the tightest level goes out at once");
+        Eq(null, key(DtnRiskEventKind.RiskBuffer, 0, 0), "below the floor goes out at once");
+        Eq(null, key(DtnRiskEventKind.Unknown, 0, 0), "RISK UNKNOWN goes out at once");
+        Eq(null, key(DtnRiskEventKind.LockReleased, 0, 0), "unlock notice goes out at once");
+        Eq("DailyLossBack", key(DtnRiskEventKind.DailyLossBack, 0, 0), "recovery may wait");
+        DtnRiskSettings none = new DtnRiskSettings();
+        Eq(null, C.AlertGroupKey(new DtnRiskEvent { Kind = DtnRiskEventKind.RiskBuffer, D = 0 }, none), "no buffer levels: below the floor is still at once");
+
+        // splitting a message
+        DtnAlertPart one = DL("A1", 304.5, 50);
+        Eq("<b>DAILY LOSS 50%</b>", one.Header, "header is the first line");
+        Eq("A1 · down 304.50 today · limit 600.00", one.Line, "account line");
+        Eq(null, one.Note, "no note");
+        DtnAlertPart rb = DtnAlertPart.FromMessage("RiskBuffer", "A1", "H\nA1\nNet liq 1 · floor 2\n<b>3 above</b>\n<i>note</i>", 3, true);
+        Eq("A1 · Net liq 1 · floor 2 · <b>3 above</b>", rb.Line, "three account lines joined");
+        Eq("<i>note</i>", rb.Note, "the rest is the note");
+
+        // one account: the message is unchanged
+        DtnAlertGrouper g = new DtnAlertGrouper();
+        g.Add(DL("A1", 304.5, 50), t);
+        Eq(0, g.TakeDue(t.AddSeconds(9), 10).Count, "held inside the window");
+        List<DtnAlertOut> o = g.TakeDue(t.AddSeconds(10), 10);
+        Check(o.Count == 1 && o[0].Text == one.Single && o[0].Loud && o[0].Accounts == 1, "alone after the window: sent exactly as before");
+
+        // three accounts a few seconds apart: one message
+        g.Add(DL("A1", 304.5, 50), t);
+        g.Add(DL("A2", 306.0, 50), t.AddSeconds(3));
+        g.Add(DL("A3", 301.25, 50), t.AddSeconds(8));
+        o = g.TakeDue(t.AddSeconds(10), 10);
+        Check(o.Count == 1 && o[0].Accounts == 3, "three accounts inside the window: one message");
+        Eq("<b>DAILY LOSS 50%</b> · 3 accounts\nA1 · down 304.50 today · limit 600.00\nA2 · down 306.00 today · limit 600.00\nA3 · down 301.25 today · limit 600.00",
+            o.Count == 1 ? o[0].Text : null, "merged text: header once, one line per account");
+        Eq(0, g.Count, "nothing left after sending");
+
+        // the window runs from the first alert, so a late account is not held forever
+        g.Add(DL("A1", 304.5, 50), t);
+        g.Add(DL("A2", 306.0, 50), t.AddSeconds(9));
+        Eq(1, g.TakeDue(t.AddSeconds(10), 10).Count, "window counts from the first alert");
+
+        // different levels and loud/quiet stay apart; same account replaces its older line
+        g.Add(DL("A1", 304.5, 50), t);
+        g.Add(DL("A2", 455.0, 75), t);
+        g.Add(DtnAlertPart.FromMessage("DailyLoss|50", "A3", "<b>X</b>\nA3 quiet", 1, false), t);
+        Eq(3, g.TakeAll().Count, "different levels and loud/quiet are separate messages");
+        g.Add(DtnAlertPart.FromMessage("RiskBuffer", "A1", "H\nA1 old", 1, true), t);
+        g.Add(DtnAlertPart.FromMessage("RiskBuffer", "A2", "H\nA2", 1, true), t);
+        g.Add(DtnAlertPart.FromMessage("RiskBuffer", "a1", "H\nA1 new", 1, true), t.AddSeconds(2));
+        o = g.TakeAll();
+        Check(o.Count == 1 && o[0].Accounts == 2 && o[0].Text.Contains("A1 new") && !o[0].Text.Contains("A1 old"), "a newer alert for the same account replaces the older line");
+
+        // shared notes once, different notes all kept
+        List<DtnAlertPart> parts = new List<DtnAlertPart>
+        {
+            DtnAlertPart.FromMessage("I", "A1", "H\nA1 · x\n<i>assumed</i>\n<i>trade in time</i>", 1, true),
+            DtnAlertPart.FromMessage("I", "A2", "H\nA2 · y\n<i>trade in time</i>", 1, true)
+        };
+        Eq("H · 2 accounts\nA1 · x\nA2 · y\n<i>assumed</i>\n<i>trade in time</i>", DtnAlertGrouper.Render(parts), "a note line shared by accounts is shown once");
+
+        // window 0: only what arrives together is merged, nothing waits
+        g.Add(DL("A1", 304.5, 50), t);
+        g.Add(DL("A2", 306.0, 50), t);
+        o = g.TakeDue(t, 0);
+        Check(o.Count == 1 && o[0].Accounts == 2, "window 0 releases at once, merged");
     }
 }

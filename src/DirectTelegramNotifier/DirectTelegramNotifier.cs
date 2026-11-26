@@ -709,6 +709,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             StopFeedWatches();
             FlushPendingFills();
+            SendGroupedAlerts(null, DateTime.UtcNow, true);     // warnings still waiting for other accounts
 
             stopDeadlineUtc = DateTime.UtcNow.AddSeconds(ShutdownDrainSec);
             stopping = true;

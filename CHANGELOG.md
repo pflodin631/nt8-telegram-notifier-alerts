@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+Changed
+- **One message for several accounts.** Inactivity clock, risk-buffer, daily-loss and consistency warnings came as one message per account, so three copied accounts meant three messages for the same event. A warning now waits up to 10 seconds for the other accounts and is sent as one message with a line per account. An account alone in that window gets the same message as before. The "back under" and "recovered" notices work the same way.
+- **Critical alerts are never held:** daily loss 90% and limit reached, consistency 90% and cap reached, the tightest risk-buffer level and below the floor, RISK UNKNOWN and lock alerts are sent at once, and a warning still waiting is sent just before them. Auto-flatten does not wait for any message. Held warnings are sent when NinjaTrader closes.
+- `/simulate` sends 51 messages (a merged three-account sample was added).
+
 ## 0.6.1 (2026-11-19)
 
 Fixed

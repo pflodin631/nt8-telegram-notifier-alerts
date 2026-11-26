@@ -149,6 +149,7 @@ Unit tests cover the pure logic, including the risk rules. Behavioural tests com
 | Unstable connection: one alert, a lasting outage still reported, a summary when stable | behavioural | ⬜ (an earlier version of this was seen live and was too noisy; this one has not been) |
 | `/status`, `/copy`, `/simulate`, `FlattenConfirm` buttons | behavioural | ✅ |
 | Problem alerts sent before routine ones; routine ones merged | behavioural | ✅ |
+| Same warning on several accounts sent as one message; critical alerts not held | unit, behavioural | ⬜ |
 | Heartbeat ping | — | ✅ |
 | Heartbeat held when Telegram refuses messages | behavioural | ⬜ |
 | Stale-data alerts, custom schedules | unit (windows) | ⬜ |

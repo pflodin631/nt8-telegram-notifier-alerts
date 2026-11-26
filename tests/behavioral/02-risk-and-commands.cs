@@ -34,6 +34,7 @@ class H3
         NinjaTrader.Core.Globals.UserDataDir = Dir;
         T = Type.GetType("NinjaTrader.NinjaScript.AddOns.DirectTelegramNotifier, AddOn");
         O = Activator.CreateInstance(T, true);
+        Set("alertGroupMs", 0);                                           // older checks expect each alert at once; grouping has its own checks
         Set("flattenCheckMaxMs", 1500); Set("autoFlattenWatchMs", 0);     // the stand-in never clears a position: keep /flatten checks short, no follow-ups
         Set("cfgAccountName", "ACC1,ACC2,ACC3");
         var a1 = Acct("ACC1", 50296.10); var a2 = Acct("ACC2", 50314.10); var a3 = Acct("ACC3", 50302.10);
@@ -188,7 +189,8 @@ class H3
         Call("RunSimulation"); d = Drain();
         Console.WriteLine("\n===== the 9 new /simulate samples =====");
         foreach (string m in d.Skip(Math.Max(0, d.Count - 11)).Take(10)) Console.WriteLine("--- \n" + m);
-        Check("/simulate sends 50 messages, in order and unmerged", d.Count == 50 && d[0].Contains("SIMULATION") && d[49].Contains("Simulation finished"));
+        Check("/simulate sends 51 messages, in order and unmerged", d.Count == 51 && d[0].Contains("SIMULATION") && d[50].Contains("Simulation finished"));
+        Check("/simulate includes a merged alert for three accounts", d.Any(m => m.Contains("DAILY LOSS 50% \u00B7 3 accounts") && m.Contains("FollowerAccount2 \u00B7 down 501.25")));
         Console.WriteLine("\n===== /help =====\n" + Plain((string)Call("BuildHelpText")));
 
         Console.WriteLine(fails == 0 ? "\nALL CHECKS PASSED" : "\n" + fails + " CHECK(S) FAILED");

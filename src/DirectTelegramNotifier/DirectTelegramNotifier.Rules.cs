@@ -72,12 +72,14 @@ namespace NinjaTrader.NinjaScript.AddOns
         private void CheckInactivity(DateTime nowUtc)
         {
             if ((nowUtc - lastInactivityCheckUtc).TotalSeconds < 30)
+            {
+                SendGroupedAlerts(null, nowUtc, false);           // inactivity alerts held for other accounts
                 return;
+            }
             lastInactivityCheckUtc = nowUtc;
             try
             {
-                List<string> loud = new List<string>();
-                List<string> quiet = new List<string>();
+                List<DtnAlertPart> grouped = new List<DtnAlertPart>();
 
                 foreach (CbiAccount a in SnapshotTrackedAccounts())
                 {
@@ -105,7 +107,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         assumed = activityAssumed.Contains(a.Name);
                     }
                     if (created)
-                        quiet.Add(MsgActivityStarted(a.Name, limit));
+                        grouped.Add(DtnAlertPart.FromMessage("ActivityStarted", a.Name, MsgActivityStarted(a.Name, limit), 1, false));
 
                     double remaining = Dtn.InactivityRemainingDays(last, nowUtc, limit);
                     double level = Dtn.RiskLevel(remaining, inactivityAlerts);
@@ -118,15 +120,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
 
                     if (level < previous)
-                        loud.Add(MsgInactivity(a.Name, remaining, limit, nowUtc - last, level, assumed));
+                        grouped.Add(DtnAlertPart.FromMessage(level <= 0 ? "InactivityReached" : "Inactivity", a.Name,
+                            MsgInactivity(a.Name, remaining, limit, nowUtc - last, level, assumed), 2, true));
                     else if (double.IsPositiveInfinity(level) && !double.IsPositiveInfinity(previous))
-                        quiet.Add(MsgInactivityReset(a.Name, limit));
+                        grouped.Add(DtnAlertPart.FromMessage("InactivityReset", a.Name, MsgInactivityReset(a.Name, limit), 1, false));
                 }
 
-                foreach (string text in loud)
-                    EnqueueText(text);
-                foreach (string text in quiet)
-                    EnqueueQuiet(text);
+                // The same rule on copied accounts usually fires for all of them at once: one message, not one per account.
+                SendGroupedAlerts(grouped, nowUtc, false);
             }
             catch (Exception ex)
             {

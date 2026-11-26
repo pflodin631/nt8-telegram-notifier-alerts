@@ -24,6 +24,7 @@ An AddOn that sends fills, connection problems and risk alerts to a private Tele
 **Risk checks** (each can be switched off)
 - **Drawdown floor**, entered by hand or computed from a static, end-of-day trailing or intraday trailing rule, with alerts as net liquidation approaches it.
 - **Daily loss limit**, in dollars or percent, and the prop-firm **consistency** and **inactivity** rules.
+- **One message for several accounts.** When the same warning fires for several accounts within 10 seconds (copied trades), it comes as one message with a line per account. Limit-reached, below-the-floor and lock alerts are never held.
 - **Order checks:** positions without a stop, exit orders left on a flat account, stuck orders, too many contracts.
 - **Optional auto-flatten and lock.** At the floor or a limit, the account is flattened and anything that reopens on it is closed again until `/unlock` or the session ends.
 - **Risk UNKNOWN** when you hold a position and the account's data is down or stale, so the numbers above can't be trusted.
