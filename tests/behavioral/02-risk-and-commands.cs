@@ -189,7 +189,12 @@ class H3
         Call("RunSimulation"); d = Drain();
         Console.WriteLine("\n===== the 9 new /simulate samples =====");
         foreach (string m in d.Skip(Math.Max(0, d.Count - 11)).Take(10)) Console.WriteLine("--- \n" + m);
-        Check("/simulate sends 51 messages, in order and unmerged", d.Count == 51 && d[0].Contains("SIMULATION") && d[50].Contains("Simulation finished"));
+        // The expected count comes from the sample list in RunSimulation, so adding a sample needs no edit here.
+        string simSrc = System.IO.File.ReadAllText("src/DirectTelegramNotifier/DirectTelegramNotifier.Messages.cs");
+        int simStart = simSrc.IndexOf("private void RunSimulation()"); int simEnd = simSrc.IndexOf("#endregion", simStart);
+        int simExpected = Regex.Matches(simSrc.Substring(simStart, simEnd - simStart), @"\bEnqueueSample\(").Count;
+        Check("/simulate sample list was found in the source", simStart > 0 && simExpected > 40);
+        Check("/simulate sends " + simExpected + " messages, in order and unmerged", d.Count == simExpected && d[0].Contains("SIMULATION") && d[d.Count - 1].Contains("Simulation finished"));
         Check("/simulate includes a merged alert for three accounts", d.Any(m => m.Contains("DAILY LOSS 50% \u00B7 3 accounts") && m.Contains("FollowerAccount2 \u00B7 down 501.25")));
         Console.WriteLine("\n===== /help =====\n" + Plain((string)Call("BuildHelpText")));
 

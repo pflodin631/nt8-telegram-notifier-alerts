@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.2 (2026-11-26)
 
 Changed
 - **One message for several accounts.** Inactivity clock, risk-buffer, daily-loss and consistency warnings came as one message per account, so three copied accounts meant three messages for the same event. A warning now waits up to 10 seconds for the other accounts and is sent as one message with a line per account. An account alone in that window gets the same message as before. The "back under" and "recovered" notices work the same way.
