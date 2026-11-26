@@ -27,9 +27,10 @@ The stand-in can drift from the real API: the final check is an F5 compile in Ni
 Add a section to `CHANGELOG.md` (plain language), bump `AddOnVersion` and the header comment in `DirectTelegramNotifier.cs` and the README status line, run all three suites, commit, tag `vX.Y.Z`, `gh release create ... --prerelease`.
 
 ## Open items
-- Peter should confirm the current release (0.6.2) compiles in NinjaTrader and that /status shows the Contracts block (MNQ DEC26).
+- Peter confirmed 0.6.2 compiles. Still to confirm: 0.7.0 compiles in NinjaTrader and that /status shows the Contracts block (MNQ DEC26) and the Trade blockers line; the 7 new checks in docs/TESTING.md (above all which state a disabled but still listed strategy reports).
 - Real MFFU account numbers are still in old public git history; `git filter-repo` offered, no decision yet.
 - Merged per-account warnings (`DtnAlertGrouper`, 10 s window, critical alerts never held): released in 0.6.2, not yet seen in NinjaTrader.
+- 0.7.0 trade blockers, NOT TRADING reminders and `/away`: not yet seen in NinjaTrader. Possible follow-ups: a start-up grace from `startedUtc` for strategies that are not listed yet; moving `ObserveTrading` earlier in the housekeeping tick.
 - README needs a redacted screenshot.
 
 ## Workflow (keeps token use down)

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 (2026-11-26)
 
 Added
 - **"Trade blockers" line in `/status`.** One line: none found among the checks, or which accounts cannot place a trade and why: order connection down, data connection down, market data stale, locked by the notifier, no strategy enabled. It only reads what the notifier already tracks and sends no alert of its own. Followers also carry the leader's blockers ("leader L: locked by the notifier"), because they copy its orders. A stale feed only counts for an account that holds, or runs a strategy on, that instrument. While the market is closed the line says it is not checked. It says that Replikanto's on/off state is not visible, and that "no strategy enabled" is not checked when `EnableStrategyWatch` is off or has not scanned yet.
