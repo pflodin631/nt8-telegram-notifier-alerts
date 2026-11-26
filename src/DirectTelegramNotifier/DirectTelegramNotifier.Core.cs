@@ -1440,6 +1440,174 @@ namespace NinjaTrader.NinjaScript.AddOns
         public int Accounts;
     }
 
+    // ---- "Can this setup place a trade right now?" ----
+
+    // What the add-on could read about one account at one moment. The caller fills it from NinjaTrader; the rules are in Dtn.TradeBlockers.
+    public sealed class DtnTradeFacts
+    {
+        public string Account = string.Empty;
+        public bool OrderConnectionDown;
+        public bool DataConnectionDown;
+        public string StaleInstrument;                  // a feed this account holds or runs a strategy on that is connected but sends no ticks, or null
+        public bool Locked;                             // locked by the notifier (session lock or hold)
+        public bool StrategiesKnown;                    // strategy watch is on and has scanned; false = unknown, not "none"
+        public int RunningStrategies;                   // in the Realtime state, on this account
+        public bool Expected;                           // a strategy ran on this account recently (trading hours only)
+        public string Leader = string.Empty;            // set when this account is a follower: the strategies run on the leader
+        public int LeaderRunning;
+        public bool LeaderExpected;
+        // A follower copies the leader's orders, so what stops the leader stops it too. Filled for followers only.
+        public bool LeaderOrderConnectionDown;
+        public bool LeaderDataConnectionDown;
+        public string LeaderStaleInstrument;
+        public bool LeaderLocked;
+    }
+
+    // Does a strategy run on this account? Counted in trading time only, so a weekend or the daily break never makes an account
+    // "stop being expected", and a strategy switched off in the evening stops being expected after IdleLimitSeconds of open market.
+    // Never expected until a strategy has been seen running.
+    public sealed class DtnExpectation
+    {
+        public const double IdleLimitSeconds = 12 * 3600.0;
+        public const double MaxStepSeconds = 60.0;      // a stalled timer or a sleeping PC is not counted as trading time
+
+        public bool Seen;
+        public double IdleSeconds;
+        private DateTime last = DateTime.MinValue;
+
+        public bool Expected { get { return Seen && IdleSeconds < IdleLimitSeconds; } }
+
+        public void Observe(DateTime now, bool running, bool marketOpen)
+        {
+            double step = 0;
+            if (last != DateTime.MinValue)
+                step = Math.Max(0, Math.Min((now - last).TotalSeconds, MaxStepSeconds));
+            last = now;
+            if (running)
+            {
+                Seen = true;
+                IdleSeconds = 0;
+            }
+            else if (Seen && marketOpen)
+                IdleSeconds += step;
+        }
+
+        // Restores the idle time saved in the state file. The time the add-on was not running is not counted.
+        public void Restore(double idleSeconds)
+        {
+            Seen = true;
+            IdleSeconds = Math.Max(0, idleSeconds);
+        }
+    }
+
+    // Trading time this account could not trade since the last end-of-day report (expected accounts, market open only).
+    public sealed class DtnBlockedTime
+    {
+        public double TradingSeconds;
+        public double BlockedSeconds;
+        public readonly List<string> Reasons = new List<string>();
+        public string Session = string.Empty;           // the session key when this was last added to; a restart only restores the current session
+
+        public void Add(double step, IList<string> blockers)
+        {
+            TradingSeconds += step;
+            if (blockers == null || blockers.Count == 0)
+                return;
+            BlockedSeconds += step;
+            foreach (string b in blockers)
+                if (!Reasons.Contains(b))
+                    Reasons.Add(b);
+        }
+    }
+
+    // Accounts that have exactly the same blockers, for the /status line and the end-of-day block.
+    public sealed class DtnTradeGroup
+    {
+        public readonly List<string> Accounts = new List<string>();
+        public readonly List<string> Reasons = new List<string>();
+    }
+
+    public static class DtnTrade
+    {
+        // A follower is expected to trade when its leader is: the strategies run on the leader and the copier mirrors them.
+        public static bool IsExpected(DtnTradeFacts f)
+        {
+            return f != null && (f.Expected || (!string.IsNullOrEmpty(f.Leader) && f.LeaderExpected));
+        }
+
+        // The one place that says why an account cannot place a trade. Empty list = nothing found that blocks it.
+        // Connection, data and lock reasons apply to every account, and a follower also gets the leader's. "No strategy enabled" only
+        // applies to an account that is expected to run one (a follower goes by its leader).
+        public static List<string> Blockers(DtnTradeFacts f)
+        {
+            List<string> r = new List<string>();
+            if (f == null)
+                return r;
+            if (f.OrderConnectionDown)
+                r.Add("order connection down");
+            if (f.DataConnectionDown)
+                r.Add("data connection down");
+            if (!string.IsNullOrEmpty(f.StaleInstrument))
+                r.Add("market data for " + f.StaleInstrument + " is stale");
+            if (f.Locked)
+                r.Add("locked by the notifier");
+
+            bool follower = !string.IsNullOrEmpty(f.Leader);
+            if (follower)
+            {
+                // What stops the leader stops the copied trades. A reason the account already has itself is not repeated.
+                string who = "leader " + f.Leader + ": ";
+                if (f.LeaderOrderConnectionDown && !f.OrderConnectionDown)
+                    r.Add(who + "order connection down");
+                if (f.LeaderDataConnectionDown && !f.DataConnectionDown)
+                    r.Add(who + "data connection down");
+                if (!string.IsNullOrEmpty(f.LeaderStaleInstrument) && f.LeaderStaleInstrument != f.StaleInstrument)
+                    r.Add(who + "market data for " + f.LeaderStaleInstrument + " is stale");
+                if (f.LeaderLocked && !f.Locked)
+                    r.Add(who + "locked by the notifier");
+            }
+            bool running = f.RunningStrategies > 0 || (follower && f.LeaderRunning > 0);
+            if (f.StrategiesKnown && IsExpected(f) && !running)
+                r.Add("no strategy enabled");
+            return r;
+        }
+
+        // Groups accounts that have exactly the same blockers, in order of first appearance. Accounts with none are left out.
+        public static List<DtnTradeGroup> Group(IList<KeyValuePair<string, List<string>>> perAccount)
+        {
+            List<DtnTradeGroup> groups = new List<DtnTradeGroup>();
+            if (perAccount == null)
+                return groups;
+            foreach (KeyValuePair<string, List<string>> kv in perAccount)
+            {
+                if (kv.Value == null || kv.Value.Count == 0)
+                    continue;
+                string key = string.Join("|", kv.Value.ToArray());
+                DtnTradeGroup g = null;
+                foreach (DtnTradeGroup x in groups)
+                    if (string.Join("|", x.Reasons.ToArray()) == key)
+                    {
+                        g = x;
+                        break;
+                    }
+                if (g == null)
+                {
+                    g = new DtnTradeGroup();
+                    g.Reasons.AddRange(kv.Value);
+                    groups.Add(g);
+                }
+                g.Accounts.Add(kv.Key);
+            }
+            return groups;
+        }
+
+        // The state file keeps the idle time per account: "strat|account=seconds".
+        public static bool TryParseIdle(string value, out double seconds)
+        {
+            return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out seconds) && seconds >= 0 && !double.IsInfinity(seconds);
+        }
+    }
+
     // Holds warnings for a short window so the same alert for several accounts (copied trades cross a level a few seconds apart)
     // goes out as one message. Only for warnings: critical alerts never come through here. Not thread-safe: the caller locks.
     public sealed class DtnAlertGrouper

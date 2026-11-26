@@ -276,7 +276,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             int running;
             lock (strategyLock)
-                running = strategies.Values.Count(x => !IsTerminatedState(x.State));
+                running = strategies.Values.Count(x => IsRunningState(x.State));
             int feedCount;
             lock (feedLock)
                 feedCount = feeds.Values.Count(x => x.Subscribed);

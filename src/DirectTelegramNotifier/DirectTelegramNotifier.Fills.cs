@@ -677,6 +677,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             sb.Append(EmChart).Append(" <b>STATUS</b>").Append(Sep).Append(TimeText(NtNow())).Append("\n\n");
 
             sb.Append(AutoFlattenLine()).Append("\n\n");
+            sb.Append(BuildTradeLine()).Append("\n\n");
             sb.Append("<b>Connections</b>\n").Append(BuildConnectionsBlock()).Append("\n");
 
             string leaderName = ResolveLeaderName();
@@ -799,9 +800,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             return sb.ToString();
         }
 
-        private void CheckEndOfDay()
+        private void CheckEndOfDay(DateTime nowUtc)
         {
-            DateTime nowTz = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, eodTimeZone);
+            DateTime nowTz = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, eodTimeZone);
             if (nowTz.TimeOfDay < eodTimeOfDay || lastEodReportDate == nowTz.Date)
                 return;
 
@@ -820,6 +821,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 sessionStartNt = NtNow();
                 tradedInstruments.Clear();
             }
+            ResetBlockedTime();
 
             EnqueueQuiet(report + BuildBrokerBlock());
             WriteOutput("EOD summary queued.");
@@ -901,6 +903,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                       .Append(" <code>").Append(Html(b.InstrumentName)).Append("</code>\n");
                 }
             }
+            string blocked = BuildBlockedEodBlock();
+            if (blocked.Length > 0)
+                sb.Append("\n").Append(blocked).Append("\n");
             string roll = BuildRollEodLine();
             if (roll.Length > 0)
                 sb.Append("\n").Append(roll);

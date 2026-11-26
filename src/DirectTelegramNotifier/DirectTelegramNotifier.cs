@@ -758,6 +758,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     ScanOrders();
                 if (cfgEnableStrategyWatch)
                     CheckStrategies();
+                ObserveTrading(DateTime.UtcNow);
 
                 CheckStaleData();
                 CheckCopyMismatch();
@@ -770,7 +771,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 RunSoftwareCheck();
                 CheckDeliveryBackup(DateTime.UtcNow);
                 CheckMachineHealth();
-                CheckEndOfDay();
+                CheckEndOfDay(DateTime.UtcNow);
             }
             catch (Exception ex)
             {

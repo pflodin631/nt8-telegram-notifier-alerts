@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+Added
+- **"Trade blockers" line in `/status`.** One line: none found among the checks, or which accounts cannot place a trade and why: order connection down, data connection down, market data stale, locked by the notifier, no strategy enabled. It only reads what the notifier already tracks and sends no alert of its own. Followers also carry the leader's blockers ("leader L: locked by the notifier"), because they copy its orders. A stale feed only counts for an account that holds, or runs a strategy on, that instrument. While the market is closed the line says it is not checked. It says that Replikanto's on/off state is not visible, and that "no strategy enabled" is not checked when `EnableStrategyWatch` is off or has not scanned yet.
+- **"No strategy enabled"** counts only strategies in the Realtime state. It is checked only for an account that ran a strategy within the last 12 hours of open market (a follower goes by its leader), so a manual trader who never runs a strategy is never told. Still to check in NinjaTrader: which state a disabled but still listed strategy reports.
+- **"Could not trade" block in the end-of-day report.** How long, during open market, an account that was expected to trade could not, and why. It survives a NinjaTrader restart within the same session. Time NinjaTrader or the PC was not running is not counted, and Replikanto's on/off state is not visible. An error while building the line or the block is logged and the line or block is left out, so the report and `/status` still arrive.
+- The state file gets `strat|` and `blk|` lines. A state file without them loads as before, and an older version skips them.
+
 ## 0.6.2 (2026-11-26)
 
 Changed

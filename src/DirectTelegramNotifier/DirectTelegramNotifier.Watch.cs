@@ -689,6 +689,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             catch (Exception) { return null; }
         }
 
+        // Only Realtime counts as a strategy that can trade. Historical (still loading) and Transition cannot place a live order.
+        // NOT YET CHECKED IN NINJATRADER: which state a strategy reports when it is disabled but still listed in Account.Strategies.
+        // If it reports Realtime, a disabled strategy would count as running; see docs/limitations.md.
+        private static bool IsRunningState(string state)
+        {
+            return string.Equals(state, "Realtime", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static bool IsTerminatedState(string state)
         {
             return string.Equals(state, "Terminated", StringComparison.OrdinalIgnoreCase);
@@ -783,6 +791,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (!strategyBaselined)
                     return "  not scanned yet\n";
 
+                // Display only, and the same rule as the trade-blocker check: only Realtime is running. Any other state that is not
+                // Terminated (loading, transition) is shown with its state text and marked not live.
                 int running = 0;
                 int disabled = 0;
                 foreach (StrategyInfo si in strategies.Values.OrderBy(x => x.Name))
@@ -792,9 +802,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                         disabled++;
                         continue;
                     }
-                    running++;
+                    bool live = IsRunningState(si.State);
+                    if (live)
+                        running++;
                     sb.Append("  \u2022 <code>").Append(Html(si.Name)).Append("</code>").Append(Sep)
-                      .Append(Html(si.AccountName)).Append(Sep).Append(Html(si.State)).Append("\n");
+                      .Append(Html(si.AccountName)).Append(Sep).Append(Html(si.State));
+                    if (!live)
+                        sb.Append(" <i>(not live)</i>");
+                    sb.Append("\n");
                 }
                 if (running == 0)
                     sb.Append("  none running\n");

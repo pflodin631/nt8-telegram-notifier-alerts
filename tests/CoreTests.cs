@@ -56,6 +56,7 @@ internal static class CoreTests
         BackupAndOpenPnl();
         Json();
         AlertGrouping();
+        TradeBlockers();
 
         Console.WriteLine();
         Console.WriteLine(passed + " passed, " + failed + " failed");
@@ -999,6 +1000,119 @@ internal static class CoreTests
     {
         string msg = "<b>DAILY LOSS " + pct + "%</b>\n" + acct + " · down " + loss.ToString("0.00", CultureInfo.InvariantCulture) + " today · limit 600.00";
         return DtnAlertPart.FromMessage("DailyLoss|" + pct, acct, msg, 1, true);
+    }
+
+    private static DtnTradeFacts Tf(string acct)
+    {
+        return new DtnTradeFacts { Account = acct, StrategiesKnown = true };
+    }
+
+    private static string J(List<string> l) { return string.Join(" | ", l.ToArray()); }
+
+    private static void TradeBlockers()
+    {
+        // each reason, and a clean account
+        Eq("", J(DtnTrade.Blockers(Tf("A1"))), "nothing blocking: empty list");
+        Eq("", J(DtnTrade.Blockers(null)), "null facts: empty list");
+        DtnTradeFacts f = Tf("A1"); f.OrderConnectionDown = true;
+        Eq("order connection down", J(DtnTrade.Blockers(f)), "order connection down");
+        f = Tf("A1"); f.DataConnectionDown = true;
+        Eq("data connection down", J(DtnTrade.Blockers(f)), "data connection down");
+        f = Tf("A1"); f.StaleInstrument = "MNQ DEC26";
+        Eq("market data for MNQ DEC26 is stale", J(DtnTrade.Blockers(f)), "stale feed");
+        f = Tf("A1"); f.Locked = true;
+        Eq("locked by the notifier", J(DtnTrade.Blockers(f)), "lock is a reason");
+        f = Tf("A1"); f.OrderConnectionDown = true; f.Locked = true; f.Expected = true;
+        Eq("order connection down | locked by the notifier | no strategy enabled", J(DtnTrade.Blockers(f)), "reasons add up, in a fixed order");
+
+        // no strategy: only for an account expected to run one, and only when strategies are known
+        f = Tf("A1"); f.Expected = true;
+        Eq("no strategy enabled", J(DtnTrade.Blockers(f)), "expected account with no strategy running");
+        f.RunningStrategies = 1;
+        Eq("", J(DtnTrade.Blockers(f)), "expected account with a strategy running: fine");
+        f = Tf("A1");
+        Eq("", J(DtnTrade.Blockers(f)), "manual trader (never ran a strategy) gets no 'no strategy' reason");
+        f = Tf("A1"); f.Expected = true; f.StrategiesKnown = false;
+        Eq("", J(DtnTrade.Blockers(f)), "strategies not scanned yet: unknown is not 'none'");
+        f = Tf("A1"); f.Expected = true; f.OrderConnectionDown = true; f.StrategiesKnown = false;
+        Eq("order connection down", J(DtnTrade.Blockers(f)), "connection reasons do not depend on the strategy watch");
+
+        // followers go by the leader
+        f = Tf("F1"); f.Leader = "L"; f.LeaderExpected = true;
+        Eq("no strategy enabled", J(DtnTrade.Blockers(f)), "follower: leader expected, no strategy on it");
+        f.LeaderRunning = 1;
+        Eq("", J(DtnTrade.Blockers(f)), "follower: leader has a strategy running");
+        f = Tf("F1"); f.Leader = "L";
+        Eq("", J(DtnTrade.Blockers(f)), "follower: leader never ran a strategy, nothing expected");
+        f = Tf("F1"); f.Leader = "L"; f.Expected = true; f.RunningStrategies = 1;
+        Eq("", J(DtnTrade.Blockers(f)), "follower with its own strategy running is fine");
+        // a follower also carries what stops its leader, even when its own connection is fine
+        f = Tf("F1"); f.Leader = "L"; f.LeaderLocked = true;
+        Eq("leader L: locked by the notifier", J(DtnTrade.Blockers(f)), "follower: leader locked");
+        f = Tf("F1"); f.Leader = "L"; f.LeaderOrderConnectionDown = true;
+        Eq("leader L: order connection down", J(DtnTrade.Blockers(f)), "follower: leader's order connection down");
+        f = Tf("F1"); f.Leader = "L"; f.LeaderDataConnectionDown = true;
+        Eq("leader L: data connection down", J(DtnTrade.Blockers(f)), "follower: leader's data connection down");
+        f = Tf("F1"); f.Leader = "L"; f.LeaderStaleInstrument = "MNQ DEC26";
+        Eq("leader L: market data for MNQ DEC26 is stale", J(DtnTrade.Blockers(f)), "follower: leader's feed stale");
+        f = Tf("F1"); f.Leader = "L"; f.LeaderLocked = true; f.Locked = true; f.LeaderOrderConnectionDown = true; f.OrderConnectionDown = true;
+        Eq("order connection down | locked by the notifier", J(DtnTrade.Blockers(f)), "follower: a reason it has itself is not repeated for the leader");
+        f = Tf("L"); f.LeaderLocked = true;
+        Eq("", J(DtnTrade.Blockers(f)), "the leader itself takes nothing from the leader fields");
+        Check(DtnTrade.IsExpected(new DtnTradeFacts { Leader = "L", LeaderExpected = true }), "IsExpected: follower inherits");
+        Check(!DtnTrade.IsExpected(new DtnTradeFacts { LeaderExpected = true }), "IsExpected: no leader, nothing inherited");
+
+        // expected-to-trade counts open market only
+        DateTime t = new DateTime(2026, 11, 23, 15, 0, 0, DateTimeKind.Utc);
+        DtnExpectation e = new DtnExpectation();
+        Check(!e.Expected, "never seen running: not expected");
+        for (int i = 0; i < 100; i++) { e.Observe(t, false, true); t = t.AddSeconds(30); }
+        Check(!e.Expected, "idle time without ever running does not make it expected");
+        e.Observe(t, true, true);
+        Check(e.Expected && e.IdleSeconds == 0, "a running strategy makes it expected");
+        double idleBefore = e.IdleSeconds;
+        for (int i = 0; i < 2 * (int)(DtnExpectation.IdleLimitSeconds / 30); i++) { t = t.AddSeconds(30); e.Observe(t, false, false); }
+        Check(e.Expected && e.IdleSeconds == idleBefore, "market closed (weekend, daily break): idle time does not grow");
+        int stepsToLimit = (int)(DtnExpectation.IdleLimitSeconds / 30);
+        for (int i = 0; i < stepsToLimit - 20; i++) { t = t.AddSeconds(30); e.Observe(t, false, true); }
+        Check(e.Expected, "just under the idle limit in open market: still expected");
+        for (int i = 0; i < 40; i++) { t = t.AddSeconds(30); e.Observe(t, false, true); }
+        Check(!e.Expected, "over the idle limit in open market: no longer expected");
+        t = t.AddSeconds(30); e.Observe(t, true, true);
+        Check(e.Expected, "a strategy running again makes it expected again");
+
+        // a stalled timer is not counted as trading time
+        DtnExpectation g = new DtnExpectation(); g.Observe(t, true, true);
+        g.Observe(t.AddSeconds(5), false, true);
+        g.Observe(t.AddHours(10), false, true);
+        Check(g.IdleSeconds <= 5 + DtnExpectation.MaxStepSeconds + 0.001, "a 10 hour gap between ticks counts for at most one step");
+
+        // restored from the state file: expected, and idle time carries over
+        DtnExpectation r = new DtnExpectation(); r.Restore(3600);
+        Check(r.Expected && r.IdleSeconds == 3600, "restore: expected with the saved idle time");
+        r.Restore(DtnExpectation.IdleLimitSeconds + 1);
+        Check(!r.Expected, "restore: idle time already over the limit");
+        double secs;
+        Check(DtnTrade.TryParseIdle("120", out secs) && secs == 120, "idle value parses");
+        Check(!DtnTrade.TryParseIdle("-5", out secs) && !DtnTrade.TryParseIdle("abc", out secs) && !DtnTrade.TryParseIdle("", out secs), "bad idle values are refused");
+
+        // grouping for the one-line summary and the end-of-day block
+        List<KeyValuePair<string, List<string>>> per = new List<KeyValuePair<string, List<string>>>();
+        per.Add(new KeyValuePair<string, List<string>>("A1", new List<string> { "order connection down" }));
+        per.Add(new KeyValuePair<string, List<string>>("A2", new List<string>()));
+        per.Add(new KeyValuePair<string, List<string>>("A3", new List<string> { "order connection down" }));
+        per.Add(new KeyValuePair<string, List<string>>("A4", new List<string> { "locked by the notifier" }));
+        List<DtnTradeGroup> gr = DtnTrade.Group(per);
+        Check(gr.Count == 2 && J(gr[0].Accounts) == "A1 | A3" && J(gr[1].Accounts) == "A4", "same reasons are grouped, clean accounts left out");
+        Check(DtnTrade.Group(null).Count == 0, "no accounts: no groups");
+
+        // blocked time for the end-of-day report
+        DtnBlockedTime bt = new DtnBlockedTime();
+        bt.Add(60, new List<string>());
+        bt.Add(60, new List<string> { "order connection down" });
+        bt.Add(60, new List<string> { "order connection down", "no strategy enabled" });
+        Check(bt.TradingSeconds == 180 && bt.BlockedSeconds == 120, "blocked time counts only the steps with a reason");
+        Check(J(bt.Reasons) == "order connection down | no strategy enabled", "reasons are listed once, in the order seen");
     }
 
     private static void AlertGrouping()

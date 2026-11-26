@@ -37,7 +37,7 @@ An AddOn that sends fills, connection problems and risk alerts to a private Tele
 
 | Command | Does |
 |---|---|
-| `/status` | Connections, positions, P&L, risk and locks per account, copier status, strategies, data feeds |
+| `/status` | Whether anything blocks trading, connections, positions, P&L, risk and locks per account, copier status, strategies, data feeds |
 | `/flatten [account]` | Closes positions and cancels working orders on the tracked accounts, or only on the account whose name contains the text you add (`/flatten 002`). Keeps checking until you are flat (up to 15 s) and reports how long it took, or **STILL EXPOSED**. Closes re-entries for `FlattenHoldSeconds` |
 | `/cancel [account]` | Cancels working orders and leaves positions alone |
 | `/lock [account]` | Flattens and keeps the account flat until `/unlock` or the session ends |

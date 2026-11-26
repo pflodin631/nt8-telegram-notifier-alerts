@@ -1492,6 +1492,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                         string field = key.Substring(0, bar);
                         string account = key.Substring(bar + 1);
 
+                        if (LoadTradeStateLine(field, account, value, session))
+                            continue;
+
                         if (field == "lock")
                         {
                             // session|sinceTicks|reason: only this session's locks survive a restart
@@ -1592,6 +1595,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         sb.Append("act|").Append(kv.Key).Append('=').Append(kv.Value.Ticks.ToString(CultureInfo.InvariantCulture)).Append("\r\n");
                     foreach (string account in activityAssumed)
                         sb.Append("assumed|").Append(account).Append("=1\r\n");
+                    AppendTradeState(sb);
                 }
 
                 // Write a temp file first so a crash mid-write can't leave a half-written state file.
